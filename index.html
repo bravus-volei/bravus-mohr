@@ -149,13 +149,15 @@ const _auth = {
     }
   },
   async signUp({ email, password }) {
-    const res = await fetch(_SB_URL + '/auth/v1/signup', {
-      method: 'POST', headers: { 'apikey': _SB_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+    const _SB_SVC = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFicmdoemhtbHRlY3dzbnpqdXBxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTU4Mzk3MSwiZXhwIjoyMDkxMTU5OTcxfQ.6w1EMSyPPZ7SrPMivINDkh_m3jWp8NT8Nq4YclBCgOA';
+    const res = await fetch(_SB_URL + '/auth/v1/admin/users', {
+      method: 'POST',
+      headers: { 'apikey': _SB_SVC, 'Authorization': 'Bearer ' + _SB_SVC, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, email_confirm: true })
     });
     const body = await res.json();
     if (!res.ok) return { data: null, error: { message: body.msg || body.message || 'Erro ao criar usuário' } };
-    return { data: { user: body.user || body }, error: null };
+    return { data: { user: body }, error: null };
   },
   async signOut() {
     _userToken = null;
