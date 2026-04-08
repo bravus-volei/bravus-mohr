@@ -503,8 +503,12 @@ h1,h2,h3{font-weight:700}
   <!-- PAGES -->
   <div id="page-home" class="page">
     <div class="stat-grid" id="home-stats"></div>
-    <div id="home-next-training"></div>
+    <div id="home-next-trainings"></div>
     <div id="home-announcements"></div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:16px;padding:24px 0 32px">
+      <img src="assets/logo-mohr.jpg" style="width:120px;border-radius:12px;object-fit:contain;background:transparent">
+      <img src="assets/logo-bravus.jpeg" style="width:120px;border-radius:12px;object-fit:contain;background:transparent">
+    </div>
   </div>
 
   <div id="page-athletes" class="page">
@@ -885,6 +889,19 @@ h1,h2,h3{font-weight:700}
     </div>
   </div>
 </div>
+
+<!-- MODAL RSVP LIST -->
+<div class="modal-overlay" id="modal-rsvp">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="rsvp-modal-title">Confirmações</div>
+    <div id="rsvp-content"></div>
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="btn btn-secondary btn-block" onclick="closeModal('modal-rsvp')">Fechar</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ===================== STATE =====================
 let SB = supabase; // usar o wrapper fetch direto
@@ -1132,23 +1149,54 @@ function roleLabel(r) {
 
 // ===================== HOME =====================
 async function loadHome() {
-  // Stats
-  const { data: athleteData } = await SB.from('athletes').select('id, status').eq('status','ativo');
-  const { data: trainingData } = await SB.from('trainings').select('id, date').gte('date', new Date().toISOString().split('T')[0]).order('date').limit(5);
+  const today = new Date().toISOString().split('T')[0];
+
+  // Stats + próximos compromissos (busca mais dados)
+  const [{ data: athleteData }, { data: trainingData }] = await Promise.all([
+    SB.from('athletes').select('id, status').eq('status','ativo'),
+    SB.from('trainings').select('id, title, type, date, time, location').gte('date', today).order('date').limit(3)
+  ]);
+
   const statsEl = document.getElementById('home-stats');
   statsEl.innerHTML = `
     <div class="stat-card"><div class="stat-val">${athleteData?.length||0}</div><div class="stat-lbl">Atletas ativos</div></div>
-    <div class="stat-card"><div class="stat-val">${trainingData?.length||0}</div><div class="stat-lbl">Treinos próximos</div></div>`;
+    <div class="stat-card"><div class="stat-val">${trainingData?.length||0}</div><div class="stat-lbl">Próximos</div></div>`;
 
-  // Next training
-  const nextEl = document.getElementById('home-next-training');
+  // Próximos 3 compromissos
+  const nextEl = document.getElementById('home-next-trainings');
+  const role = currentProfile?.role;
+  const canSeeRsvp = role === 'admin' || role === 'tecnico' || role === 'tesoureiro';
   if (trainingData && trainingData.length > 0) {
-    const t = trainingData[0];
-    const d = new Date(t.date + 'T12:00:00');
-    nextEl.innerHTML = `<div class="card"><div class="card-title" style="margin-bottom:4px">Próximo treino</div>
-      <div style="font-size:13px;color:var(--text2)">${d.toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'})}</div></div>`;
+    // Buscar RSVPs do usuário atual para esses treinos
+    const trainingIds = trainingData.map(t => t.id);
+    let myRsvps = [];
+    if (currentProfile) {
+      const { data: rsvpData } = await SB.from('training_rsvp')
+        .select('training_id, status').eq('profile_id', currentProfile.id).in('training_id', trainingIds);
+      myRsvps = rsvpData || [];
+    }
+    nextEl.innerHTML = '<div class="sec-title" style="margin-bottom:10px">Próximos compromissos</div>' +
+      trainingData.map(t => {
+        const d = new Date(t.date + 'T12:00:00');
+        const dateStr = d.toLocaleDateString('pt-BR', { weekday:'short', day:'numeric', month:'short' });
+        const typeIcon = t.type === 'jogo' ? '🏐' : t.type === 'torneio' ? '🏆' : t.type === 'viagem' ? '✈️' : '🏋️';
+        const myRsvp = myRsvps.find(r => r.training_id === t.id);
+        const confirmed = myRsvp?.status === 'confirmado';
+        return `<div class="card" style="margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:14px">${typeIcon} ${t.title||'Treino'}</div>
+              <div style="font-size:12px;color:var(--text2);margin-top:3px">${dateStr}${t.time ? ' · '+t.time : ''}${t.location ? ' · '+t.location : ''}</div>
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0">
+              <button class="btn btn-sm ${confirmed ? 'btn-success' : 'btn-secondary'}" onclick="toggleRsvp('${t.id}','${confirmed}')" style="font-size:11px;padding:4px 8px">${confirmed ? '✓ Confirmado' : 'Confirmar'}</button>
+              ${canSeeRsvp ? `<button class="btn btn-sm btn-secondary" onclick="openRsvpList('${t.id}','${(t.title||'Treino').replace(/'/g,'')}')" style="font-size:11px;padding:4px 8px">👥</button>` : ''}
+            </div>
+          </div>
+        </div>`;
+      }).join('');
   } else {
-    nextEl.innerHTML = '';
+    nextEl.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:8px 0">Nenhum compromisso próximo.</div>';
   }
 
   // Announcements
@@ -1167,6 +1215,32 @@ async function loadHome() {
   } else {
     annEl.innerHTML = '';
   }
+}
+
+async function toggleRsvp(trainingId, isConfirmed) {
+  if (!currentProfile) { toast('Faça login para confirmar presença', 'error'); return; }
+  const alreadyConfirmed = isConfirmed === 'true';
+  if (alreadyConfirmed) {
+    await SB.from('training_rsvp').delete().eq('training_id', trainingId).eq('profile_id', currentProfile.id);
+    toast('Presença removida', 'success');
+  } else {
+    await SB.from('training_rsvp').upsert({ training_id: trainingId, profile_id: currentProfile.id, status: 'confirmado', created_at: new Date().toISOString() }, { onConflict: 'training_id,profile_id' });
+    toast('Presença confirmada!', 'success');
+  }
+  loadHome();
+}
+
+async function openRsvpList(trainingId, trainingTitle) {
+  document.getElementById('rsvp-modal-title').textContent = trainingTitle;
+  document.getElementById('rsvp-content').innerHTML = '<div style="color:var(--text2);font-size:13px">Carregando...</div>';
+  openModal('modal-rsvp');
+  const { data } = await SB.from('training_rsvp')
+    .select('*, profiles(name, nickname)').eq('training_id', trainingId).eq('status', 'confirmado').order('created_at');
+  const list = data || [];
+  document.getElementById('rsvp-content').innerHTML = list.length === 0
+    ? '<div style="color:var(--text2);font-size:13px;padding:12px 0">Ninguém confirmou ainda.</div>'
+    : `<div style="font-size:13px;color:var(--text2);margin-bottom:10px">${list.length} confirmado${list.length>1?'s':''}</div>` +
+      list.map(r => `<div style="padding:8px 0;border-bottom:1px solid var(--bg3);font-size:14px">✓ ${r.profiles?.name||'Usuário'}</div>`).join('');
 }
 
 // ===================== ATHLETES =====================
@@ -1746,7 +1820,8 @@ function renderFeeList(list) {
       const feeAmt = f.amount || ath?.monthly_fee_value || settings.fee_amount || 50;
       const treasPhone = settings.treasurer_phone ? settings.treasurer_phone.replace(/\D/g,'') : null;
       const wamsg = encodeURIComponent(`Olá ${ath?.nickname||ath?.name}! Mensalidade ${f.month}/${f.year} R$ ${feeAmt} aguardando. PIX: ${settings.pix_key||''} — TESOUREIRO BRAVUS`);
-      const waLink = phone ? `https://wa.me/55${phone}?text=${wamsg}` : null;
+      const waTarget = phone || treasPhone;
+      const waLink = waTarget ? `https://wa.me/55${waTarget}?text=${wamsg}` : null;
       return `<div class="fee-item" onclick="openFeeDetail('${f.id}')">
         <div class="fee-status" style="background:${f.status==='pago'?'var(--success)':f.status==='atrasado'?'var(--danger)':'var(--warn)'}"></div>
         <div class="fee-info">
