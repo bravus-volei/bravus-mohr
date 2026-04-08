@@ -616,6 +616,10 @@ h1,h2,h3{font-weight:700}
       <input type="tel" id="ath-phone" placeholder="51999999999">
     </div>
     <div class="form-group">
+      <label>E-mail <span style="color:var(--text2);font-size:12px">(opcional — cria acesso ao app)</span></label>
+      <input type="email" id="ath-email" placeholder="email@exemplo.com">
+    </div>
+    <div class="form-group">
       <label>Mensalidade (deixe vazio para padrão)</label>
       <input type="number" id="ath-fee" placeholder="Ex: 50.00" step="0.01">
     </div>
@@ -1199,6 +1203,7 @@ function openAthleteModal(id) {
     document.getElementById('ath-jersey-number').value = a.jersey_number || '';
     document.getElementById('ath-jersey-size').value = a.jersey_size || '';
     document.getElementById('ath-phone').value = a.phone || '';
+    document.getElementById('ath-email').value = a.email || '';
     document.getElementById('ath-fee').value = a.monthly_fee_value || '';
     document.getElementById('ath-status').value = a.status || 'ativo';
     document.getElementById('ath-notes').value = a.notes || '';
@@ -1215,7 +1220,7 @@ function openAthleteModal(id) {
 }
 
 function clearAthleteForm() {
-  ['ath-name','ath-nickname','ath-birth','ath-position','ath-jersey-number','ath-jersey-size','ath-phone','ath-fee','ath-notes','ath-id'].forEach(id => {
+  ['ath-name','ath-nickname','ath-birth','ath-position','ath-jersey-number','ath-jersey-size','ath-phone','ath-email','ath-fee','ath-notes','ath-id'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -1270,6 +1275,9 @@ async function saveAthlete() {
     }
   }
 
+  const email = document.getElementById('ath-email').value.trim().toLowerCase();
+  if (email) payload.email = email;
+
   let error;
   if (id) {
     ({ error } = await SB.from('athletes').update(payload).eq('id', id));
@@ -1279,6 +1287,25 @@ async function saveAthlete() {
   }
 
   if (error) { toast('Erro: ' + error.message, 'error'); return; }
+
+  // Se e-mail fornecido em novo cadastro, criar usuário automaticamente
+  if (email && !id) {
+    const tempPassword = 'Bravus' + Math.floor(1000 + Math.random() * 9000) + '!';
+    const { data: authData, error: authErr } = await SB.auth.signUp({ email, password: tempPassword });
+    if (authErr) {
+      toast('Atleta cadastrado! Mas não foi possível criar acesso: ' + authErr.message, 'warning');
+    } else if (authData && authData.user) {
+      await SB.from('profiles').insert({
+        auth_user_id: authData.user.id, email, name, role: 'atleta', active: true,
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString()
+      });
+      toast(`Atleta cadastrado! Acesso criado — senha provisória: ${tempPassword}`, 'success');
+      closeModal('modal-athlete');
+      loadAthletes();
+      return;
+    }
+  }
+
   toast(id ? 'Atleta atualizado!' : 'Atleta cadastrado!', 'success');
   closeModal('modal-athlete');
   loadAthletes();
