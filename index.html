@@ -148,6 +148,15 @@ const _auth = {
       return { data: { session: null }, error: null };
     }
   },
+  async signUp({ email, password }) {
+    const res = await fetch(_SB_URL + '/auth/v1/signup', {
+      method: 'POST', headers: { 'apikey': _SB_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const body = await res.json();
+    if (!res.ok) return { data: null, error: { message: body.msg || body.message || 'Erro ao criar usuário' } };
+    return { data: { user: body.user || body }, error: null };
+  },
   async signOut() {
     _userToken = null;
     localStorage.removeItem('sb_token');
