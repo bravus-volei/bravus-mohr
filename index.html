@@ -21,7 +21,11 @@ function _headers(extra) {
 }
 
 async function _apiFetch(path, opts) {
-  const res = await fetch(_SB_URL + path, Object.assign({ headers: _headers() }, opts || {}));
+  let res = await fetch(_SB_URL + path, Object.assign({ headers: _headers() }, opts || {}));
+  if (res.status === 401) {
+    const session = await _auth._refreshToken();
+    if (session) res = await fetch(_SB_URL + path, Object.assign({ headers: _headers() }, opts || {}));
+  }
   let body = null;
   try { body = await res.json(); } catch(e) { body = null; }
   if (!res.ok) return { data: null, error: { message: (body && body.msg) || (body && body.message) || ('HTTP ' + res.status) } };
@@ -109,14 +113,32 @@ const _auth = {
     _authListeners.forEach(cb => cb('SIGNED_IN', { user }));
     return { data: { user, session: body }, error: null };
   },
+  async _refreshToken() {
+    const refresh = localStorage.getItem('sb_refresh');
+    if (!refresh) return null;
+    try {
+      const res = await fetch(_SB_URL + '/auth/v1/token?grant_type=refresh_token', {
+        method: 'POST', headers: { 'apikey': _SB_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refresh })
+      });
+      const body = await res.json();
+      if (!res.ok) { localStorage.removeItem('sb_token'); localStorage.removeItem('sb_refresh'); return null; }
+      _userToken = body.access_token;
+      localStorage.setItem('sb_token', body.access_token);
+      localStorage.setItem('sb_refresh', body.refresh_token || refresh);
+      const payload = JSON.parse(atob(body.access_token.split('.')[1]));
+      return { user: { id: payload.sub, email: payload.email } };
+    } catch(e) { return null; }
+  },
   async getSession() {
     const token = localStorage.getItem('sb_token');
     if (!token) return { data: { session: null }, error: null };
-    // Validate token by checking expiry in JWT payload
     try {
       const payload = JSON.parse(atob(token.split('.')[1]));
       if (payload.exp && payload.exp < Date.now() / 1000) {
-        localStorage.removeItem('sb_token');
+        // Token expirado — tenta refresh automático
+        const session = await this._refreshToken();
+        if (session) return { data: { session }, error: null };
         return { data: { session: null }, error: null };
       }
       _userToken = token;
