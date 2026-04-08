@@ -71,21 +71,34 @@ function _table(name) {
       const sub = { select() { return { single() { return Promise.resolve({ data: d, error: null }); }, then(r) { return Promise.resolve({ data: d, error: null }).then(r); } }; }, single() { return Promise.resolve({ data: d, error: null }); }, then(r) { return Promise.resolve({ data: d, error: null }).then(r); } };
       return sub;
     },
-    async update(vals) {
-      let url = '/rest/v1/' + name + '?';
-      _filters.forEach((f, i) => { url += (i ? '&' : '') + f; });
-      const hdrs = _headers({ 'Prefer': 'return=representation' });
-      const res = await fetch(_SB_URL + url, { method: 'PATCH', headers: hdrs, body: JSON.stringify(vals) });
-      let body = null; try { body = await res.json(); } catch(e) {}
-      if (!res.ok) return { data: null, error: { message: (body && (body.message || body.msg)) || ('HTTP ' + res.status) } };
-      return { data: body, error: null };
+    update(vals) {
+      const uq = {
+        eq(col, val) { _filters.push(col + '=eq.' + encodeURIComponent(val)); return uq; },
+        neq(col, val) { _filters.push(col + '=neq.' + encodeURIComponent(val)); return uq; },
+        async then(resolve) {
+          let url = '/rest/v1/' + name + '?';
+          _filters.forEach((f, i) => { url += (i ? '&' : '') + f; });
+          const hdrs = _headers({ 'Prefer': 'return=representation' });
+          const res = await fetch(_SB_URL + url, { method: 'PATCH', headers: hdrs, body: JSON.stringify(vals) });
+          let body = null; try { body = await res.json(); } catch(e) {}
+          if (!res.ok) { resolve({ data: null, error: { message: (body && (body.message || body.msg)) || ('HTTP ' + res.status) } }); return; }
+          resolve({ data: body, error: null });
+        }
+      };
+      return uq;
     },
-    async delete() {
-      let url = '/rest/v1/' + name + '?';
-      _filters.forEach((f, i) => { url += (i ? '&' : '') + f; });
-      const res = await fetch(_SB_URL + url, { method: 'DELETE', headers: _headers() });
-      if (!res.ok) { let b = null; try { b = await res.json(); } catch(e) {} return { data: null, error: { message: (b && (b.message || b.msg)) || ('HTTP ' + res.status) } }; }
-      return { data: null, error: null };
+    delete() {
+      const dq = {
+        eq(col, val) { _filters.push(col + '=eq.' + encodeURIComponent(val)); return dq; },
+        async then(resolve) {
+          let url = '/rest/v1/' + name + '?';
+          _filters.forEach((f, i) => { url += (i ? '&' : '') + f; });
+          const res = await fetch(_SB_URL + url, { method: 'DELETE', headers: _headers() });
+          if (!res.ok) { let b = null; try { b = await res.json(); } catch(e) {} resolve({ data: null, error: { message: (b && (b.message || b.msg)) || ('HTTP ' + res.status) } }); return; }
+          resolve({ data: null, error: null });
+        }
+      };
+      return dq;
     },
     async upsert(rows, opts) {
       const arr = Array.isArray(rows) ? rows : [rows];
@@ -1281,7 +1294,7 @@ async function saveAthlete() {
   }
 
   const email = document.getElementById('ath-email').value.trim().toLowerCase();
-  if (email) payload.email = email;
+  // email não é coluna da tabela athletes — não incluir no payload do banco
 
   let error;
   if (id) {
@@ -1291,7 +1304,7 @@ async function saveAthlete() {
     ({ error } = await SB.from('athletes').insert(payload));
   }
 
-  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  if (error) { toast('Erro ao salvar: ' + error.message, 'error'); return; }
 
   // Se e-mail fornecido em novo cadastro, criar usuário automaticamente
   if (email && !id) {
