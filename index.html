@@ -1036,7 +1036,12 @@ async function loadProfile() {
 async function loadSettings() {
   const { data } = await SB.from('app_settings').select('*');
   if (data) {
-    data.forEach(r => { settings[r.key] = r.value; });
+    data.forEach(r => {
+      // Não sobrescrever com valor vazio se já temos default
+      if (r.value !== null && r.value !== undefined && r.value !== '') {
+        settings[r.key] = r.value;
+      }
+    });
   }
 }
 
@@ -1278,8 +1283,12 @@ async function toggleRsvpTraining(trainingId, isConfirmed) {
 
 // Disparo WhatsApp em massa para confirmação de presença
 async function openWhatsAppDispatch(trainingId) {
-  const t = trainings.find(x => x.id === trainingId);
-  if (!t) return;
+  let t = trainings.find(x => x.id === trainingId);
+  if (!t) {
+    const { data } = await SB.from('trainings').select('*').eq('id', trainingId).limit(1);
+    t = data && data[0];
+  }
+  if (!t) { toast('Treino não encontrado', 'error'); return; }
   // Buscar atletas ativos com celular
   const { data: aths } = await SB.from('athletes').select('name, phone').eq('status', 'ativo');
   const withPhone = (aths || []).filter(a => a.phone && a.phone.trim());
@@ -1499,7 +1508,9 @@ async function openAthleteDetail(id) {
   const phone = a.phone ? a.phone.replace(/\D/g,'') : null;
   const treasPhone = settings.treasurer_phone ? settings.treasurer_phone.replace(/\D/g,'') : null;
   const feeAmt = a.monthly_fee_value || settings.fee_amount || 50;
-  const waMsgTes = encodeURIComponent(`Olá ${a.nickname||a.name}! Seu pagamento da mensalidade no valor de R$ ${feeAmt} está aguardando. PIX: ${settings.pix_key||''} — TESOUREIRO BRAVUS`);
+  const pixKey = settings.pix_key || '';
+  const pixLine = pixKey ? `\n\n💰 Chave PIX: ${pixKey}` : '';
+  const waMsgTes = encodeURIComponent(`Olá ${a.nickname||a.name}! 🏐\n\nSua mensalidade de R$ ${Number(feeAmt).toFixed(2)} está aguardando pagamento.${pixLine}\n\n_Bravus Mohr Vôlei_`);
   const waLinkTes = treasPhone ? `https://wa.me/55${treasPhone}?text=${waMsgTes}` : null;
   const waLinkAthleta = phone ? `https://wa.me/55${phone}?text=${waMsgTes}` : null;
 
@@ -1954,7 +1965,9 @@ function renderFeeList(list) {
       const phone = ath?.phone ? ath.phone.replace(/\D/g,'') : null;
       const feeAmt = f.amount || ath?.monthly_fee_value || settings.fee_amount || 50;
       const treasPhone = settings.treasurer_phone ? settings.treasurer_phone.replace(/\D/g,'') : null;
-      const wamsg = encodeURIComponent(`Olá ${ath?.nickname||ath?.name}! Mensalidade ${f.month}/${f.year} R$ ${feeAmt} aguardando. PIX: ${settings.pix_key||''} — TESOUREIRO BRAVUS`);
+      const pixKey = settings.pix_key || '';
+      const pixLine = pixKey ? `\n\n💰 Chave PIX: ${pixKey}` : '';
+      const wamsg = encodeURIComponent(`Olá ${ath?.nickname||ath?.name}! 🏐\n\nSua mensalidade ${f.month}/${f.year} de R$ ${Number(feeAmt).toFixed(2)} está aguardando pagamento.${pixLine}\n\n_Bravus Mohr Vôlei_`);
       const waTarget = phone || treasPhone;
       const waLink = waTarget ? `https://wa.me/55${waTarget}?text=${wamsg}` : null;
       return `<div class="fee-item" onclick="openFeeDetail('${f.id}')">
