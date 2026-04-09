@@ -1665,7 +1665,7 @@ async function openAttendanceModal(trainingId) {
       <div class="att-name">${a.nickname || a.name}</div>
       <div class="att-btns">
         <button class="att-btn ${st==='presente'?'active-present':''}" onclick="setAtt('${a.id}','presente',this)" title="Presente">✓</button>
-        <button class="att-btn ${st==='ausente'?'active-absent':''}" onclick="setAtt('${a.id}','ausente',this)" title="Ausente">✗</button>
+        <button class="att-btn ${st==='falta'?'active-absent':''}" onclick="setAtt('${a.id}','falta',this)" title="Falta">✗</button>
         <button class="att-btn ${st==='justificado'?'active-justified':''}" onclick="setAtt('${a.id}','justificado',this)" title="Justificado">J</button>
       </div>
     </div>`;
@@ -1686,7 +1686,7 @@ function setAtt(athleteId, status, btn) {
   row.querySelectorAll('.att-btn').forEach(b => b.classList.remove('active-present','active-absent','active-justified'));
   const newSt = currentAttendance[athleteId].status;
   if (newSt === 'presente') btn.parentElement.children[0].classList.add('active-present');
-  else if (newSt === 'ausente') btn.parentElement.children[1].classList.add('active-absent');
+  else if (newSt === 'falta') btn.parentElement.children[1].classList.add('active-absent');
   else if (newSt === 'justificado') btn.parentElement.children[2].classList.add('active-justified');
 }
 
