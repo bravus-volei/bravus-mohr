@@ -1410,27 +1410,20 @@ async function openRsvpList(trainingId, trainingTitle) {
     document.getElementById('rsvp-content').innerHTML = '<div style="color:var(--text2);font-size:13px;padding:12px 0">Ninguém confirmou ainda.</div>';
     return;
   }
-  // Buscar profiles com athlete_id e email
+  // Buscar profiles e todos os athletes de uma vez (time pequeno)
   const profileIds = list.map(r => r.profile_id);
-  const { data: profs } = await SB.from('profiles').select('id, name, email, athlete_id').in('id', profileIds);
-  // Buscar apelidos dos athletes — via athlete_id ou via email (fallback para perfis sem vínculo)
-  const athIds = (profs || []).map(p => p.athlete_id).filter(Boolean);
-  const athEmails = (profs || []).filter(p => !p.athlete_id && p.email).map(p => p.email);
-  const athMap = {}; // keyed by athlete.id
-  const athEmailMap = {}; // keyed by athlete.email
-  const allAths = [];
-  if (athIds.length > 0) {
-    const { data: a1 } = await SB.from('athletes').select('id, email, nickname, name').in('id', athIds);
-    (a1 || []).forEach(a => allAths.push(a));
-  }
-  if (athEmails.length > 0) {
-    const { data: a2 } = await SB.from('athletes').select('id, email, nickname, name').in('email', athEmails);
-    (a2 || []).forEach(a => allAths.push(a));
-  }
-  allAths.forEach(a => { athMap[a.id] = a.nickname || a.name; if (a.email) athEmailMap[a.email] = a.nickname || a.name; });
+  const { data: profs } = await SB.from('profiles').select('id, name, email, athlete_id, auth_user_id').in('id', profileIds);
+  const { data: allAths } = await SB.from('athletes').select('id, email, nickname, name');
+  const athById = {}; const athByEmail = {};
+  (allAths || []).forEach(a => {
+    athById[a.id] = a.nickname || a.name;
+    if (a.email) athByEmail[a.email.toLowerCase()] = a.nickname || a.name;
+  });
   const profMap = {};
   (profs || []).forEach(p => {
-    profMap[p.id] = (p.athlete_id && athMap[p.athlete_id]) || (p.email && athEmailMap[p.email]) || p.name;
+    const byId = p.athlete_id && athById[p.athlete_id];
+    const byEmail = p.email && athByEmail[p.email.toLowerCase()];
+    profMap[p.id] = byId || byEmail || p.name;
   });
   document.getElementById('rsvp-content').innerHTML =
     `<div style="font-size:13px;color:var(--text2);margin-bottom:10px">${list.length} confirmado${list.length>1?'s':''}</div>` +
