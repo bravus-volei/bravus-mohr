@@ -1844,17 +1844,25 @@ async function generateFees() {
   const { data: athData } = await SB.from('athletes').select('id, monthly_fee_value').eq('status','ativo');
   if (!athData || athData.length === 0) { toast('Nenhum atleta ativo', 'error'); return; }
 
-  const defaultFee = parseFloat(settings.fee_amount) || 50;
-  const rows = athData.map(a => ({
-    athlete_id: a.id, year, month,
-    amount: a.monthly_fee_value || defaultFee,
-    status: 'pendente', created_at: new Date().toISOString(), updated_at: new Date().toISOString()
-  }));
+  // Buscar quem já tem mensalidade neste mês/ano
+  const { data: existing } = await SB.from('monthly_fees').select('athlete_id').eq('month', month).eq('year', year);
+  const existingIds = new Set((existing || []).map(x => x.athlete_id));
 
-  // Upsert (ignore duplicates)
-  const { error } = await SB.from('monthly_fees').upsert(rows, { onConflict: 'athlete_id,year,month', ignoreDuplicates: true });
+  // Inserir apenas os que ainda não têm
+  const defaultFee = parseFloat(settings.fee_amount) || 50;
+  const rows = athData
+    .filter(a => !existingIds.has(a.id))
+    .map(a => ({
+      athlete_id: a.id, year, month,
+      amount: a.monthly_fee_value || defaultFee,
+      status: 'pendente', created_at: new Date().toISOString(), updated_at: new Date().toISOString()
+    }));
+
+  if (rows.length === 0) { toast('Todos os atletas já têm mensalidade neste mês', 'success'); return; }
+
+  const { error } = await SB.from('monthly_fees').insert(rows);
   if (error) { toast('Erro: ' + error.message, 'error'); return; }
-  toast('Mensalidades geradas!', 'success');
+  toast(`${rows.length} mensalidade(s) gerada(s)!`, 'success');
   loadFees();
 }
 
