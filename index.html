@@ -505,9 +505,9 @@ h1,h2,h3{font-weight:700}
     <div class="stat-grid" id="home-stats"></div>
     <div id="home-next-trainings"></div>
     <div id="home-announcements"></div>
-    <div style="display:flex;flex-direction:column;align-items:center;gap:16px;padding:24px 0 32px">
-      <img src="assets/logo-mohr.jpg" style="width:120px;border-radius:12px;object-fit:contain;background:transparent">
-      <img src="assets/logo-bravus.jpeg" style="width:120px;border-radius:12px;object-fit:contain;background:transparent">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:20px;padding:24px 0 32px">
+      <img src="assets/logo-mohr.jpg" style="width:156px;border-radius:12px;object-fit:contain;mix-blend-mode:multiply">
+      <img src="assets/logo-bravus.jpeg" style="width:156px;border-radius:12px;object-fit:contain;mix-blend-mode:multiply">
     </div>
   </div>
 
@@ -1368,7 +1368,7 @@ async function saveAthlete() {
   }
 
   const email = document.getElementById('ath-email').value.trim().toLowerCase();
-  // email não é coluna da tabela athletes — não incluir no payload do banco
+  if (email) payload.email = email;
 
   let error;
   if (id) {
@@ -1382,16 +1382,16 @@ async function saveAthlete() {
 
   // Se e-mail fornecido em novo cadastro, criar usuário automaticamente
   if (email && !id) {
-    const tempPassword = 'Bravus' + Math.floor(1000 + Math.random() * 9000) + '!';
+    const tempPassword = 'Bravus' + Math.floor(1000 + Math.random() * 9000);
     const { data: authData, error: authErr } = await SB.auth.signUp({ email, password: tempPassword });
     if (authErr) {
-      toast('Atleta cadastrado! Mas não foi possível criar acesso: ' + authErr.message, 'warning');
+      toast('Atleta cadastrado! Mas nao foi possivel criar acesso: ' + authErr.message, 'warning');
     } else if (authData && authData.user) {
       await SB.from('profiles').insert({
         auth_user_id: authData.user.id, email, name, role: 'atleta', active: true,
         created_at: new Date().toISOString(), updated_at: new Date().toISOString()
       });
-      toast(`Atleta cadastrado! Acesso criado — senha provisória: ${tempPassword}`, 'success');
+      toast('Atleta cadastrado! Acesso criado — senha provisoria: ' + tempPassword, 'success');
       closeModal('modal-athlete');
       loadAthletes();
       return;
