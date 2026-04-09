@@ -916,6 +916,43 @@ h1,h2,h3{font-weight:700}
   </div>
 </div>
 
+<div class="modal-overlay" id="modal-edit-user">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="edit-usr-modal-title">Editar Usuário</div>
+    <div class="form-group">
+      <label>Nome *</label>
+      <input type="text" id="edit-usr-name" placeholder="Nome completo">
+    </div>
+    <div class="form-group">
+      <label>E-mail</label>
+      <input type="email" id="edit-usr-email" placeholder="email@exemplo.com">
+    </div>
+    <div class="form-group">
+      <label>Função</label>
+      <select id="edit-usr-role">
+        <option value="atleta">Atleta</option>
+        <option value="tesoureiro">Tesoureiro</option>
+        <option value="tecnico">Técnico</option>
+        <option value="admin">Administrador</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Nova senha (deixe em branco para não alterar)</label>
+      <input type="password" id="edit-usr-password" placeholder="Mínimo 6 caracteres">
+    </div>
+    <input type="hidden" id="edit-usr-id">
+    <input type="hidden" id="edit-usr-user-id">
+    <div class="modal-actions" style="flex-direction:column;gap:8px">
+      <div style="display:flex;gap:8px;width:100%">
+        <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-edit-user');showUsers()">Cancelar</button>
+        <button class="btn btn-primary" style="flex:2" onclick="saveEditUser()">Salvar</button>
+      </div>
+      <button id="edit-usr-delete-btn" class="btn btn-danger btn-block" onclick="deleteUser(document.getElementById('edit-usr-id').value)" style="display:none">🗑️ Excluir usuário</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-profile">
   <div class="modal">
     <div class="modal-handle"></div>
@@ -2575,15 +2612,81 @@ async function showUsers() {
   const canAdd = role === 'admin';
   document.getElementById('fee-detail-content').innerHTML = `
     ${canAdd ? `<button class="btn btn-primary btn-block" style="margin-bottom:12px" onclick="openUserModal()">+ Novo Usuário</button>` : ''}
-    ${(data||[]).map(u => `<div class="user-item">
+    ${(data||[]).map(u => `<div class="user-item" style="cursor:pointer" onclick="openEditUserModal('${u.id}')">
       <div class="user-info">
         <div class="user-name">${u.name} <span class="role-badge role-${u.role}">${roleLabel(u.role)}</span></div>
-        <div class="user-email">${u.email}</div>
+        <div class="user-email">${u.email||''}</div>
       </div>
-      ${canAdd && u.id !== currentProfile?.id ? `<button class="btn btn-icon" onclick="toggleUserActive('${u.id}',${!u.active})" title="${u.active?'Desativar':'Ativar'}">${u.active?'🟢':'🔴'}</button>` : ''}
+      <span style="font-size:18px;color:var(--text2)">›</span>
     </div>`).join('')}`;
   document.getElementById('fee-detail-actions').innerHTML = `<button class="btn btn-secondary btn-block" onclick="closeModal('modal-fee-detail')">Fechar</button>`;
   openModal('modal-fee-detail');
+}
+
+async function openEditUserModal(profileId) {
+  const { data: profs } = await SB.from('profiles').select('*').eq('id', profileId).limit(1);
+  const u = profs && profs[0];
+  if (!u) return;
+
+  // Fechar modal de lista e abrir modal de edição
+  closeModal('modal-fee-detail');
+
+  document.getElementById('edit-usr-id').value = u.id;
+  document.getElementById('edit-usr-user-id').value = u.user_id || '';
+  document.getElementById('edit-usr-name').value = u.name || '';
+  document.getElementById('edit-usr-email').value = u.email || '';
+  document.getElementById('edit-usr-role').value = u.role || 'atleta';
+  document.getElementById('edit-usr-password').value = '';
+  document.getElementById('edit-usr-modal-title').textContent = u.name || 'Editar Usuário';
+  const canDelete = currentProfile?.role === 'admin' && u.id !== currentProfile?.id;
+  document.getElementById('edit-usr-delete-btn').style.display = canDelete ? '' : 'none';
+  openModal('modal-edit-user');
+}
+
+async function saveEditUser() {
+  const id = document.getElementById('edit-usr-id').value;
+  const userId = document.getElementById('edit-usr-user-id').value;
+  const name = document.getElementById('edit-usr-name').value.trim();
+  const email = document.getElementById('edit-usr-email').value.trim();
+  const role = document.getElementById('edit-usr-role').value;
+  const newPass = document.getElementById('edit-usr-password').value;
+  if (!name) { toast('Nome obrigatório', 'error'); return; }
+
+  // Atualizar profile
+  const { error } = await SB.from('profiles').update({ name, email, role, updated_at: new Date().toISOString() }).eq('id', id);
+  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+
+  // Resetar senha se preenchida
+  if (newPass && userId) {
+    const r = await fetch(`${_SB_URL}/auth/v1/admin/users/${userId}`, {
+      method: 'PUT',
+      headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: newPass })
+    });
+    if (!r.ok) { toast('Perfil salvo, mas erro ao redefinir senha', 'error'); closeModal('modal-edit-user'); showUsers(); return; }
+  }
+
+  toast('Usuário atualizado!', 'success');
+  closeModal('modal-edit-user');
+  showUsers();
+}
+
+async function deleteUser(profileId) {
+  if (!confirm('Excluir este usuário permanentemente?')) return;
+  const { data: profs } = await SB.from('profiles').select('user_id').eq('id', profileId).limit(1);
+  const userId = profs && profs[0]?.user_id;
+  // Excluir profile
+  await _svcDelete('profiles', 'id', profileId);
+  // Excluir auth user se existir
+  if (userId) {
+    await fetch(`${_SB_URL}/auth/v1/admin/users/${userId}`, {
+      method: 'DELETE',
+      headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY }
+    });
+  }
+  toast('Usuário excluído', 'success');
+  closeModal('modal-edit-user');
+  showUsers();
 }
 
 function openUserModal() {
