@@ -2245,12 +2245,6 @@ async function markFeePending(feeId) {
 <script>
 // ===================== EXTRA CHARGES =====================
 async function loadExtraCharges() {
-  // Garantir que todos os atletas ativos estejam vinculados a todas as cobranças
-  const { data: allChargesIds } = await SB.from('extra_charges').select('id');
-  if (allChargesIds && allChargesIds.length > 0) {
-    await linkAthletesToCharges(allChargesIds);
-  }
-
   const { data } = await SB.from('extra_charges')
     .select('*, extra_charge_athletes(id, status, paid_at, athlete_id, athletes(name, nickname, phone))')
     .order('due_date', { ascending: false });
@@ -2263,7 +2257,7 @@ async function loadExtraCharges() {
   const canEdit = role === 'admin' || role === 'tesoureiro';
 
   el.innerHTML = data.map((c, ci) => {
-    const ecas = (c.extra_charge_athletes || []).filter(a => a.status !== 'excluido');
+    const ecas = c.extra_charge_athletes || [];
     const paid = ecas.filter(a => a.status === 'pago').length;
     const pend = ecas.length - paid;
     const dueDate = c.due_date ? new Date(c.due_date + 'T12:00:00').toLocaleDateString('pt-BR') : '-';
@@ -2423,8 +2417,7 @@ async function deleteCharge(chargeId) {
 
 async function deleteChargeAthlete(ecaId) {
   if (!confirm('Remover este atleta desta cobrança?')) return;
-  // Marca como 'excluido' em vez de deletar para evitar que o auto-link o re-adicione
-  const { error } = await SB.from('extra_charge_athletes').update({ status: 'excluido' }).eq('id', ecaId);
+  const { error } = await _svcDelete('extra_charge_athletes', 'id', ecaId);
   if (error) { toast('Erro: ' + error.message, 'error'); return; }
   toast('Atleta removido desta cobrança', 'success');
   loadExtraCharges();
@@ -2440,7 +2433,7 @@ async function openChargeDetail(chargeId) {
   const canEdit = role === 'admin' || role === 'tesoureiro';
 
   document.getElementById('fee-detail-title').textContent = c.title;
-  const athleteRows = (c.extra_charge_athletes || []).filter(a => a.status !== 'excluido').map(eca => {
+  const athleteRows = (c.extra_charge_athletes || []).map(eca => {
     const ath = eca.athletes;
     const phone = ath?.phone ? ath.phone.replace(/\D/g,'') : null;
     const pixKeyE = settings.pix_key || '';
