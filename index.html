@@ -2190,10 +2190,15 @@ function toggleFeeGroup(id, header) {
   if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
 }
 
+async function _removeCaixaByOrigem(origemId) {
+  await _svcDelete('caixa_lancamentos', 'origem_id', origemId);
+}
+
 async function deleteFee(feeId) {
   if (!confirm('Excluir esta mensalidade?')) return;
   const { error } = await _svcDelete('monthly_fees', 'id', feeId);
   if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  await _removeCaixaByOrigem('fee_' + feeId);
   toast('Mensalidade excluída', 'success');
   loadFees();
 }
@@ -2213,6 +2218,8 @@ async function toggleFeePago(feeId, newStatus) {
       const nome = f.athletes?.nickname || f.athletes?.name || 'Atleta';
       await SB.from('caixa_lancamentos').insert({ data: new Date().toISOString().split('T')[0], historico: `Mensalidade ${monthNames[f.month]||f.month}/${f.year} — ${nome}`, tipo: 'entrada', valor: Number(f.amount), origem: 'mensalidade', origem_id: 'fee_' + feeId });
     }
+  } else {
+    await _removeCaixaByOrigem('fee_' + feeId);
   }
   toast(newStatus === 'pago' ? 'Marcado como pago ✅' : 'Revertido para pendente', 'success');
   loadFees();
@@ -2298,6 +2305,7 @@ async function markFeePaid(feeId) {
 async function markFeePending(feeId) {
   const { error } = await SB.from('monthly_fees').update({ status:'pendente', paid_at: null, updated_at: new Date().toISOString() }).eq('id', feeId);
   if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  await _removeCaixaByOrigem('fee_' + feeId);
   toast('Estornado!', 'success');
   closeModal('modal-fee-detail');
   loadFees();
@@ -2542,6 +2550,8 @@ async function toggleChargeAthlStatus(ecaId, newStatus) {
       const titulo = e.extra_charges?.title || 'Cobrança Extra';
       await SB.from('caixa_lancamentos').insert({ data: new Date().toISOString().split('T')[0], historico: `${titulo} — ${nome}`, tipo: 'entrada', valor: Number(e.extra_charges?.amount || 0), origem: 'cobranca_extra', origem_id: 'eca_' + ecaId });
     }
+  } else {
+    await _removeCaixaByOrigem('eca_' + ecaId);
   }
   toast(newStatus === 'pago' ? 'Marcado como pago ✅' : 'Revertido para pendente', 'success');
   loadExtraCharges();
