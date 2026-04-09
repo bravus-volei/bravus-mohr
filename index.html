@@ -675,6 +675,12 @@ h1,h2,h3{font-weight:700}
       <input type="file" id="doc-photo" accept="image/*" style="display:none" onchange="previewPhoto('doc-photo','doc-photo-preview','doc-photo-icon')">
     </div>
     <input type="hidden" id="ath-id">
+    <div id="ath-password-section" style="display:none">
+      <div class="form-group">
+        <label>🔑 Senha de acesso <span style="color:var(--text2);font-size:12px">(somente admin)</span></label>
+        <input type="password" id="ath-password" placeholder="Nova senha (mín. 6 caracteres)">
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-athlete')">Cancelar</button>
       <button class="btn btn-primary" style="flex:2" onclick="saveAthlete()">Salvar</button>
@@ -1219,8 +1225,32 @@ function showProfileMenu() {
       <div style="font-size:17px;font-weight:700">${name}</div>
       <div style="font-size:13px;color:var(--text2)">${currentUser?.email}</div>
       <span class="role-badge role-${role}" style="margin-top:6px;display:inline-flex">${roleLabel(role)}</span>
+    </div>
+    <div id="change-pass-section">
+      <button class="btn btn-secondary btn-block" style="margin-bottom:8px" onclick="toggleChangePassForm()">🔑 Alterar Senha</button>
+      <div id="change-pass-form" style="display:none">
+        <div class="form-group"><label>Nova senha</label><input type="password" id="new-pass-input" placeholder="Mínimo 6 caracteres"></div>
+        <div class="form-group"><label>Confirmar senha</label><input type="password" id="new-pass-confirm" placeholder="Repita a senha"></div>
+        <button class="btn btn-primary btn-block" onclick="changeOwnPassword()">Salvar nova senha</button>
+      </div>
     </div>`;
   openModal('modal-profile');
+}
+
+function toggleChangePassForm() {
+  const f = document.getElementById('change-pass-form');
+  f.style.display = f.style.display === 'none' ? '' : 'none';
+}
+
+async function changeOwnPassword() {
+  const p1 = document.getElementById('new-pass-input').value;
+  const p2 = document.getElementById('new-pass-confirm').value;
+  if (!p1 || p1.length < 6) { toast('Senha precisa ter ao menos 6 caracteres', 'error'); return; }
+  if (p1 !== p2) { toast('As senhas não coincidem', 'error'); return; }
+  const { error } = await SB.auth.updateUser({ password: p1 });
+  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  toast('Senha alterada com sucesso!', 'success');
+  closeModal('modal-profile');
 }
 
 function roleLabel(r) {
@@ -1472,6 +1502,13 @@ function openAthleteModal(id) {
     document.getElementById('athlete-modal-title').textContent = 'Novo Atleta';
     document.getElementById('ath-id').value = '';
   }
+  // Mostrar campo de senha só para admin em modo edição
+  const isAdmin = currentProfile?.role === 'admin';
+  const passSection = document.getElementById('ath-password-section');
+  if (passSection) {
+    passSection.style.display = (isAdmin && id) ? '' : 'none';
+    document.getElementById('ath-password').value = '';
+  }
   openModal('modal-athlete');
 }
 
@@ -1543,6 +1580,30 @@ async function saveAthlete() {
   }
 
   if (error) { toast('Erro ao salvar: ' + error.message, 'error'); return; }
+
+  // Se admin preencheu nova senha para atleta existente, resetar via admin API
+  const newPass = document.getElementById('ath-password')?.value;
+  if (id && newPass && newPass.length >= 6) {
+    const { data: profData } = await SB.from('profiles').select('user_id').eq('email', email).limit(1);
+    const userId = profData && profData[0]?.user_id;
+    if (userId) {
+      const r = await fetch(`${_SB_URL}/auth/v1/admin/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: newPass })
+      });
+      if (!r.ok) toast('Atleta salvo, mas erro ao redefinir senha', 'error');
+      else toast('Atleta atualizado e senha redefinida!', 'success');
+      closeModal('modal-athlete');
+      loadAthletes();
+      return;
+    } else {
+      toast('Atleta salvo. Sem conta de acesso vinculada para redefinir senha.', 'warning');
+      closeModal('modal-athlete');
+      loadAthletes();
+      return;
+    }
+  }
 
   // Se e-mail fornecido em novo cadastro, criar usuário automaticamente
   if (email && !id) {
@@ -2202,7 +2263,7 @@ async function loadExtraCharges() {
   const canEdit = role === 'admin' || role === 'tesoureiro';
 
   el.innerHTML = data.map((c, ci) => {
-    const ecas = c.extra_charge_athletes || [];
+    const ecas = (c.extra_charge_athletes || []).filter(a => a.status !== 'excluido');
     const paid = ecas.filter(a => a.status === 'pago').length;
     const pend = ecas.length - paid;
     const dueDate = c.due_date ? new Date(c.due_date + 'T12:00:00').toLocaleDateString('pt-BR') : '-';
@@ -2221,8 +2282,10 @@ async function loadExtraCharges() {
           ${_feeBadge(eca.status)}
           <span class="fee-amount">R$ ${Number(c.amount).toFixed(2)}</span>
           ${waLink && eca.status!=='pago' ? `<a href="${waLink}" target="_blank" class="btn btn-success btn-sm" style="padding:3px 7px">📱</a>` : ''}
-          ${canEdit && eca.status!=='pago' ? `<button class="btn btn-secondary btn-sm" onclick="markChargeAthlPaid('${eca.id}','${c.id}')" style="padding:3px 7px">✅</button>` : ''}
-          ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="deleteChargeAthlete('${eca.id}')" style="padding:3px 7px;color:var(--error)">🗑️</button>` : ''}
+          ${canEdit ? (eca.status==='pago'
+            ? `<button class="btn btn-secondary btn-sm" onclick="toggleChargeAthlStatus('${eca.id}','pendente')" style="padding:3px 7px" title="Marcar como pendente">↩️</button>`
+            : `<button class="btn btn-success btn-sm" onclick="toggleChargeAthlStatus('${eca.id}','pago')" style="padding:3px 7px" title="Marcar como pago">✅</button>`) : ''}
+          ${canEdit ? `<button class="btn btn-danger btn-sm" onclick="deleteChargeAthlete('${eca.id}')" style="padding:3px 7px" title="Remover atleta desta cobrança">🗑️</button>` : ''}
         </div>
       </div>`;
     }).join('');
@@ -2360,9 +2423,10 @@ async function deleteCharge(chargeId) {
 
 async function deleteChargeAthlete(ecaId) {
   if (!confirm('Remover este atleta desta cobrança?')) return;
-  const { error } = await _svcDelete('extra_charge_athletes', 'id', ecaId);
+  // Marca como 'excluido' em vez de deletar para evitar que o auto-link o re-adicione
+  const { error } = await SB.from('extra_charge_athletes').update({ status: 'excluido' }).eq('id', ecaId);
   if (error) { toast('Erro: ' + error.message, 'error'); return; }
-  toast('Atleta removido', 'success');
+  toast('Atleta removido desta cobrança', 'success');
   loadExtraCharges();
 }
 
@@ -2376,7 +2440,7 @@ async function openChargeDetail(chargeId) {
   const canEdit = role === 'admin' || role === 'tesoureiro';
 
   document.getElementById('fee-detail-title').textContent = c.title;
-  const athleteRows = (c.extra_charge_athletes || []).map(eca => {
+  const athleteRows = (c.extra_charge_athletes || []).filter(a => a.status !== 'excluido').map(eca => {
     const ath = eca.athletes;
     const phone = ath?.phone ? ath.phone.replace(/\D/g,'') : null;
     const pixKeyE = settings.pix_key || '';
@@ -2386,7 +2450,10 @@ async function openChargeDetail(chargeId) {
     return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--bg3);font-size:13px">
       <div style="flex:1">${ath?.nickname||ath?.name}</div>
       <span class="badge ${eca.status==='pago'?'badge-green':'badge-yellow'}">${eca.status}</span>
-      ${canEdit && eca.status!=='pago' ? `<button class="btn btn-success btn-sm" onclick="markChargeAthlPaid('${eca.id}','${chargeId}')">✅</button>` : ''}
+      ${canEdit ? (eca.status==='pago'
+        ? `<button class="btn btn-secondary btn-sm" onclick="toggleChargeAthlStatus('${eca.id}','pendente')" title="Reverter para pendente">↩️</button>`
+        : `<button class="btn btn-success btn-sm" onclick="toggleChargeAthlStatus('${eca.id}','pago')" title="Marcar como pago">✅</button>`) : ''}
+      ${canEdit ? `<button class="btn btn-danger btn-sm" onclick="deleteChargeAthlete('${eca.id}')" title="Remover atleta desta cobrança">🗑️</button>` : ''}
       ${waLink && eca.status!=='pago' ? `<a href="${waLink}" target="_blank" class="btn btn-info btn-sm" onclick="event.stopPropagation()">📱</a>` : ''}
     </div>`;
   }).join('');
@@ -2403,6 +2470,16 @@ async function markChargeAthlPaid(ecaId, chargeId) {
   const { error } = await SB.from('extra_charge_athletes').update({ status:'pago', paid_at: new Date().toISOString() }).eq('id', ecaId);
   if (error) { toast('Erro: ' + error.message, 'error'); return; }
   toast('Pago! ✅', 'success');
+  loadExtraCharges();
+}
+
+async function toggleChargeAthlStatus(ecaId, newStatus) {
+  const upd = newStatus === 'pago'
+    ? { status: 'pago', paid_at: new Date().toISOString() }
+    : { status: 'pendente', paid_at: null };
+  const { error } = await SB.from('extra_charge_athletes').update(upd).eq('id', ecaId);
+  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  toast(newStatus === 'pago' ? 'Marcado como pago ✅' : 'Revertido para pendente', 'success');
   loadExtraCharges();
 }
 
