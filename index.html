@@ -1244,13 +1244,22 @@ async function openRsvpList(trainingId, trainingTitle) {
   document.getElementById('rsvp-modal-title').textContent = trainingTitle;
   document.getElementById('rsvp-content').innerHTML = '<div style="color:var(--text2);font-size:13px">Carregando...</div>';
   openModal('modal-rsvp');
-  const { data } = await SB.from('training_rsvp')
-    .select('*, profiles(name, nickname)').eq('training_id', trainingId).eq('status', 'confirmado').order('created_at');
-  const list = data || [];
-  document.getElementById('rsvp-content').innerHTML = list.length === 0
-    ? '<div style="color:var(--text2);font-size:13px;padding:12px 0">Ninguém confirmou ainda.</div>'
-    : `<div style="font-size:13px;color:var(--text2);margin-bottom:10px">${list.length} confirmado${list.length>1?'s':''}</div>` +
-      list.map(r => `<div style="padding:8px 0;border-bottom:1px solid var(--bg3);font-size:14px">✓ ${r.profiles?.name||'Usuário'}</div>`).join('');
+  // Buscar RSVPs
+  const { data: rsvps } = await SB.from('training_rsvp')
+    .select('profile_id, status, created_at').eq('training_id', trainingId).eq('status', 'confirmado').order('created_at');
+  const list = rsvps || [];
+  if (list.length === 0) {
+    document.getElementById('rsvp-content').innerHTML = '<div style="color:var(--text2);font-size:13px;padding:12px 0">Ninguém confirmou ainda.</div>';
+    return;
+  }
+  // Buscar nomes dos profiles separadamente
+  const profileIds = list.map(r => r.profile_id);
+  const { data: profs } = await SB.from('profiles').select('id, name').in('id', profileIds);
+  const profMap = {};
+  (profs || []).forEach(p => { profMap[p.id] = p.name; });
+  document.getElementById('rsvp-content').innerHTML =
+    `<div style="font-size:13px;color:var(--text2);margin-bottom:10px">${list.length} confirmado${list.length>1?'s':''}</div>` +
+    list.map(r => `<div style="padding:8px 0;border-bottom:1px solid var(--bg3);font-size:14px">✓ ${profMap[r.profile_id] || 'Usuário'}</div>`).join('');
 }
 
 // RSVP na aba Treinos (recarrega a aba, não a home)
