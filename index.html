@@ -851,6 +851,37 @@ h1,h2,h3{font-weight:700}
   </div>
 </div>
 
+<div class="modal-overlay" id="modal-caixa">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="caixa-modal-title">Novo Lançamento</div>
+    <div class="form-group">
+      <label>Data *</label>
+      <input type="date" id="caixa-data">
+    </div>
+    <div class="form-group">
+      <label>Histórico *</label>
+      <input type="text" id="caixa-historico" placeholder="Ex: Recbto Mensalidade João Silva">
+    </div>
+    <div class="form-group">
+      <label>Tipo</label>
+      <select id="caixa-tipo">
+        <option value="entrada">Entrada</option>
+        <option value="saida">Saída</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Valor (R$) *</label>
+      <input type="number" id="caixa-valor" placeholder="0,00" step="0.01" min="0.01">
+    </div>
+    <input type="hidden" id="caixa-id">
+    <div class="modal-actions">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-caixa')">Cancelar</button>
+      <button class="btn btn-primary" style="flex:2" onclick="saveCaixaLancamento()">Salvar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-announcement">
   <div class="modal">
     <div class="modal-handle"></div>
@@ -2229,6 +2260,13 @@ async function openFeeDetail(feeId) {
 async function markFeePaid(feeId) {
   const { error } = await SB.from('monthly_fees').update({ status:'pago', paid_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', feeId);
   if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  // Lançar automaticamente no caixa
+  const { data: feeData } = await SB.from('monthly_fees').select('amount, month, year, athletes(name, nickname)').eq('id', feeId).limit(1);
+  if (feeData && feeData[0]) {
+    const f = feeData[0]; const monthNames = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    const nome = f.athletes?.nickname || f.athletes?.name || 'Atleta';
+    await SB.from('caixa_lancamentos').insert({ data: new Date().toISOString().split('T')[0], historico: `Mensalidade ${monthNames[f.month]||f.month}/${f.year} — ${nome}`, tipo: 'entrada', valor: Number(f.amount), origem: 'mensalidade', origem_id: 'fee_' + feeId });
+  }
   toast('Marcado como pago!', 'success');
   closeModal('modal-fee-detail');
   loadFees();
@@ -2472,8 +2510,178 @@ async function toggleChargeAthlStatus(ecaId, newStatus) {
     : { status: 'pendente', paid_at: null };
   const { error } = await SB.from('extra_charge_athletes').update(upd).eq('id', ecaId);
   if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  // Lançar automaticamente no caixa ao marcar pago
+  if (newStatus === 'pago') {
+    const { data: ecaData } = await SB.from('extra_charge_athletes').select('extra_charges(title, amount), athletes(name, nickname)').eq('id', ecaId).limit(1);
+    if (ecaData && ecaData[0]) {
+      const e = ecaData[0];
+      const nome = e.athletes?.nickname || e.athletes?.name || 'Atleta';
+      const titulo = e.extra_charges?.title || 'Cobrança Extra';
+      await SB.from('caixa_lancamentos').insert({ data: new Date().toISOString().split('T')[0], historico: `${titulo} — ${nome}`, tipo: 'entrada', valor: Number(e.extra_charges?.amount || 0), origem: 'cobranca_extra', origem_id: 'eca_' + ecaId });
+    }
+  }
   toast(newStatus === 'pago' ? 'Marcado como pago ✅' : 'Revertido para pendente', 'success');
   loadExtraCharges();
+}
+
+// ===================== LIVRO CAIXA =====================
+async function loadCaixa() {
+  const { data } = await SB.from('caixa_lancamentos').select('*').order('data', { ascending: false }).order('created_at', { ascending: false });
+  const el = document.getElementById('caixa-list');
+  if (!el) return;
+
+  const lancamentos = data || [];
+  let entradas = 0, saidas = 0;
+  lancamentos.forEach(l => {
+    if (l.tipo === 'entrada') entradas += Number(l.valor);
+    else saidas += Number(l.valor);
+  });
+  const saldo = entradas - saidas;
+
+  const saldoEl = document.getElementById('caixa-saldo');
+  if (saldoEl) {
+    saldoEl.textContent = 'R$ ' + saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+    saldoEl.style.color = saldo >= 0 ? 'var(--success)' : 'var(--error)';
+  }
+
+  if (lancamentos.length === 0) {
+    el.innerHTML = `<div class="empty-state"><p>Nenhum lançamento. Use "+ Lançamento" ou importe os pagamentos.</p></div>`;
+    return;
+  }
+
+  // Agrupar por mês/ano
+  const grupos = {};
+  lancamentos.forEach(l => {
+    const d = new Date(l.data + 'T12:00:00');
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    if (!grupos[key]) grupos[key] = { label: d.toLocaleDateString('pt-BR',{month:'long',year:'numeric'}), items: [], entradas: 0, saidas: 0 };
+    grupos[key].items.push(l);
+    if (l.tipo === 'entrada') grupos[key].entradas += Number(l.valor);
+    else grupos[key].saidas += Number(l.valor);
+  });
+
+  el.innerHTML = Object.entries(grupos).map(([key, g]) => {
+    const rows = g.items.map(l => {
+      const isEntrada = l.tipo === 'entrada';
+      const dataFmt = new Date(l.data + 'T12:00:00').toLocaleDateString('pt-BR');
+      const canEdit = currentProfile?.role === 'admin' || currentProfile?.role === 'tesoureiro';
+      return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--bg3);font-size:13px">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${l.historico}</div>
+          <div style="font-size:11px;color:var(--text2)">${dataFmt}${l.origem !== 'manual' ? ' · <em>automático</em>' : ''}</div>
+        </div>
+        <div style="font-weight:700;font-size:14px;white-space:nowrap;color:${isEntrada ? 'var(--success)' : 'var(--error)'}">
+          ${isEntrada ? '+' : '-'} R$ ${Number(l.valor).toLocaleString('pt-BR',{minimumFractionDigits:2})}
+        </div>
+        ${canEdit && l.origem === 'manual' ? `<button class="btn-icon" onclick="deleteCaixaLancamento('${l.id}')" style="color:var(--error);font-size:14px">🗑️</button>` : ''}
+      </div>`;
+    }).join('');
+
+    const saldoMes = g.entradas - g.saidas;
+    return `<div style="margin-bottom:12px;border-radius:12px;overflow:hidden;border:1px solid var(--bg3)">
+      <div style="background:var(--bg2);padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:700;font-size:14px;text-transform:capitalize">${g.label}</div>
+        <div style="font-size:12px;text-align:right">
+          <span style="color:var(--success)">+${g.entradas.toLocaleString('pt-BR',{minimumFractionDigits:2})}</span>
+          <span style="color:var(--text2);margin:0 4px">·</span>
+          <span style="color:var(--error)">-${g.saidas.toLocaleString('pt-BR',{minimumFractionDigits:2})}</span>
+        </div>
+      </div>
+      <div style="padding:0 14px">${rows}</div>
+    </div>`;
+  }).join('');
+}
+
+function openCaixaModal(id) {
+  document.getElementById('caixa-id').value = id || '';
+  document.getElementById('caixa-modal-title').textContent = id ? 'Editar Lançamento' : 'Novo Lançamento';
+  document.getElementById('caixa-data').value = new Date().toISOString().split('T')[0];
+  document.getElementById('caixa-historico').value = '';
+  document.getElementById('caixa-tipo').value = 'entrada';
+  document.getElementById('caixa-valor').value = '';
+  openModal('modal-caixa');
+}
+
+async function saveCaixaLancamento() {
+  const data = document.getElementById('caixa-data').value;
+  const historico = document.getElementById('caixa-historico').value.trim();
+  const tipo = document.getElementById('caixa-tipo').value;
+  const valor = parseFloat(document.getElementById('caixa-valor').value);
+  if (!data || !historico || !valor || valor <= 0) { toast('Preencha todos os campos', 'error'); return; }
+
+  const payload = { data, historico, tipo, valor, origem: 'manual' };
+  const { error } = await SB.from('caixa_lancamentos').insert(payload);
+  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  toast('Lançamento salvo!', 'success');
+  closeModal('modal-caixa');
+  loadCaixa();
+}
+
+async function deleteCaixaLancamento(id) {
+  if (!confirm('Excluir este lançamento?')) return;
+  const { error } = await _svcDelete('caixa_lancamentos', 'id', id);
+  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  toast('Excluído', 'success');
+  loadCaixa();
+}
+
+async function importarPagamentosNoCaixa() {
+  // Buscar IDs já importados para não duplicar
+  const { data: existentes } = await SB.from('caixa_lancamentos').select('origem_id').neq('origem', 'manual');
+  const jaImportados = new Set((existentes || []).map(x => x.origem_id).filter(Boolean));
+
+  // Buscar mensalidades pagas
+  const { data: fees } = await SB.from('monthly_fees')
+    .select('id, amount, paid_at, month, year, athletes(name, nickname)')
+    .eq('status', 'pago');
+
+  // Buscar cobranças extras pagas
+  const { data: ecas } = await SB.from('extra_charge_athletes')
+    .select('id, paid_at, extra_charges(title, amount), athletes(name, nickname)')
+    .eq('status', 'pago');
+
+  const rows = [];
+  const today = new Date().toISOString().split('T')[0];
+  const monthNames = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+  (fees || []).forEach(f => {
+    const ref = 'fee_' + f.id;
+    if (jaImportados.has(ref)) return;
+    const ath = f.athletes;
+    const nome = ath?.nickname || ath?.name || 'Atleta';
+    const mes = monthNames[f.month] || f.month;
+    rows.push({
+      data: f.paid_at ? f.paid_at.split('T')[0] : today,
+      historico: `Mensalidade ${mes}/${f.year} — ${nome}`,
+      tipo: 'entrada',
+      valor: Number(f.amount),
+      origem: 'mensalidade',
+      origem_id: ref
+    });
+  });
+
+  (ecas || []).forEach(e => {
+    const ref = 'eca_' + e.id;
+    if (jaImportados.has(ref)) return;
+    const ath = e.athletes;
+    const nome = ath?.nickname || ath?.name || 'Atleta';
+    const titulo = e.extra_charges?.title || 'Cobrança Extra';
+    rows.push({
+      data: e.paid_at ? e.paid_at.split('T')[0] : today,
+      historico: `${titulo} — ${nome}`,
+      tipo: 'entrada',
+      valor: Number(e.extra_charges?.amount || 0),
+      origem: 'cobranca_extra',
+      origem_id: ref
+    });
+  });
+
+  if (rows.length === 0) { toast('Nenhum pagamento novo para importar', 'success'); return; }
+
+  const { error } = await SB.from('caixa_lancamentos').insert(rows);
+  if (error) { toast('Erro ao importar: ' + error.message, 'error'); return; }
+  toast(`${rows.length} pagamento(s) importado(s)!`, 'success');
+  loadCaixa();
 }
 
 // ===================== ANNOUNCEMENTS PAGE =====================
@@ -2830,11 +3038,12 @@ function showSettingsPage() {
     pg.className = 'page';
     pg.innerHTML = `
       <div class="sec-title" style="margin-bottom:14px">Configurações</div>
-      <div class="tabs">
+      <div class="tabs" style="flex-wrap:wrap;gap:4px">
         <button class="tab active" onclick="showSettingsTab('time')" id="stab-time">Time</button>
         <button class="tab" onclick="showSettingsTab('financeiro')" id="stab-financeiro">Financeiro</button>
         <button class="tab" onclick="showSettingsTab('posicoes')" id="stab-posicoes">Posições</button>
         <button class="tab" onclick="showSettingsTab('sistema')" id="stab-sistema">Sistema</button>
+        <button class="tab" onclick="showSettingsTab('caixa')" id="stab-caixa">📒 Caixa</button>
       </div>
       <div id="settings-time" class="settings-tab-content active">
         <div class="card">
@@ -2874,6 +3083,17 @@ function showSettingsPage() {
           <button class="btn btn-danger btn-block" onclick="doLogout()">Sair do Sistema</button>
           </div>
         </div>
+      </div>
+      <div id="settings-caixa" class="settings-tab-content">
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <button class="btn btn-primary" style="flex:1" onclick="openCaixaModal()">+ Lançamento</button>
+          <button class="btn btn-secondary" style="flex:1" onclick="importarPagamentosNoCaixa()">⬇️ Importar Pagamentos</button>
+        </div>
+        <div id="caixa-saldo-bar" style="background:var(--bg2);border-radius:12px;padding:12px 16px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:13px;color:var(--text2)">Saldo disponível</span>
+          <span id="caixa-saldo" style="font-size:20px;font-weight:700;color:var(--success)">R$ 0,00</span>
+        </div>
+        <div id="caixa-list"></div>
       </div>`;
     document.getElementById('app').insertBefore(pg, document.querySelector('.bottom-nav'));
   }
@@ -2883,12 +3103,13 @@ function showSettingsPage() {
 }
 
 function showSettingsTab(tab) {
-  ['time','financeiro','posicoes','sistema'].forEach(t => {
+  ['time','financeiro','posicoes','sistema','caixa'].forEach(t => {
     document.getElementById('settings-'+t).classList.toggle('active', t===tab);
     document.getElementById('stab-'+t).classList.toggle('active', t===tab);
   });
   if (tab === 'financeiro') updatePixQr();
   if (tab === 'posicoes') renderPositions();
+  if (tab === 'caixa') loadCaixa();
 }
 
 function loadSettingsForm() {
