@@ -1410,11 +1410,18 @@ async function openRsvpList(trainingId, trainingTitle) {
     document.getElementById('rsvp-content').innerHTML = '<div style="color:var(--text2);font-size:13px;padding:12px 0">Ninguém confirmou ainda.</div>';
     return;
   }
-  // Buscar nomes dos profiles separadamente
+  // Buscar profiles com athlete_id
   const profileIds = list.map(r => r.profile_id);
-  const { data: profs } = await SB.from('profiles').select('id, name').in('id', profileIds);
+  const { data: profs } = await SB.from('profiles').select('id, name, athlete_id').in('id', profileIds);
+  // Buscar apelidos dos athletes vinculados
+  const athIds = (profs || []).map(p => p.athlete_id).filter(Boolean);
+  const athMap = {};
+  if (athIds.length > 0) {
+    const { data: aths } = await SB.from('athletes').select('id, nickname, name').in('id', athIds);
+    (aths || []).forEach(a => { athMap[a.id] = a.nickname || a.name; });
+  }
   const profMap = {};
-  (profs || []).forEach(p => { profMap[p.id] = p.name; });
+  (profs || []).forEach(p => { profMap[p.id] = (p.athlete_id && athMap[p.athlete_id]) || p.name; });
   document.getElementById('rsvp-content').innerHTML =
     `<div style="font-size:13px;color:var(--text2);margin-bottom:10px">${list.length} confirmado${list.length>1?'s':''}</div>` +
     list.map(r => `<div style="padding:8px 0;border-bottom:1px solid var(--bg3);font-size:14px">✓ ${profMap[r.profile_id] || 'Usuário'}</div>`).join('');
