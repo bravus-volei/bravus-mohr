@@ -1412,22 +1412,17 @@ async function openRsvpList(trainingId, trainingTitle) {
   }
   // Buscar profiles via service key (RLS bloqueia leitura de outros profiles)
   const profileIds = list.map(r => r.profile_id);
-  const profUrl = _SB_URL + '/rest/v1/profiles?select=id,name,email,athlete_id&id=in.(' + profileIds.map(id => encodeURIComponent(id)).join(',') + ')';
+  const profUrl = _SB_URL + '/rest/v1/profiles?select=id,name,email&id=in.(' + profileIds.map(id => encodeURIComponent(id)).join(',') + ')';
   const profRes = await fetch(profUrl, { headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY } });
   const profs = profRes.ok ? await profRes.json() : [];
-  // Buscar todos athletes via service key
-  const athRes = await fetch(_SB_URL + '/rest/v1/athletes?select=id,email,nickname,name', { headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY } });
+  // Buscar todos athletes via service key para cruzar por email
+  const athRes = await fetch(_SB_URL + '/rest/v1/athletes?select=email,nickname,name', { headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY } });
   const allAths = athRes.ok ? await athRes.json() : [];
-  const athById = {}; const athByEmail = {};
-  (allAths || []).forEach(a => {
-    athById[a.id] = a.nickname || a.name;
-    if (a.email) athByEmail[a.email.toLowerCase()] = a.nickname || a.name;
-  });
+  const athByEmail = {};
+  (allAths || []).forEach(a => { if (a.email) athByEmail[a.email.toLowerCase()] = a.nickname || a.name; });
   const profMap = {};
   (profs || []).forEach(p => {
-    const byId = p.athlete_id && athById[p.athlete_id];
-    const byEmail = p.email && athByEmail[p.email.toLowerCase()];
-    profMap[p.id] = byId || byEmail || p.name;
+    profMap[p.id] = (p.email && athByEmail[p.email.toLowerCase()]) || p.name;
   });
   document.getElementById('rsvp-content').innerHTML =
     `<div style="font-size:13px;color:var(--text2);margin-bottom:10px">${list.length} confirmado${list.length>1?'s':''}</div>` +
