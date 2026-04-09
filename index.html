@@ -708,6 +708,16 @@ h1,h2,h3{font-weight:700}
       <label>Descrição</label>
       <textarea id="tr-description" rows="2" placeholder="Detalhes do treino..."></textarea>
     </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group">
+        <label>Prazo confirmação — data</label>
+        <input type="date" id="tr-rsvp-date">
+      </div>
+      <div class="form-group">
+        <label>Prazo — hora</label>
+        <input type="time" id="tr-rsvp-time">
+      </div>
+    </div>
     <div class="form-group" style="display:flex;align-items:center;gap:10px">
       <input type="checkbox" id="tr-recurring" style="width:auto;cursor:pointer" onchange="toggleRecurring()">
       <label for="tr-recurring" style="margin:0;cursor:pointer;color:var(--text)">Evento recorrente</label>
@@ -1190,7 +1200,7 @@ async function loadHome() {
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0">
               <button class="btn btn-sm ${confirmed ? 'btn-success' : 'btn-secondary'}" onclick="toggleRsvp('${t.id}','${confirmed}')" style="font-size:11px;padding:4px 8px">${confirmed ? '✓ Confirmado' : 'Confirmar'}</button>
-              ${canSeeRsvp ? `<button class="btn btn-sm btn-secondary" onclick="openRsvpList('${t.id}','${(t.title||'Treino').replace(/'/g,'')}')" style="font-size:11px;padding:4px 8px">👥</button>` : ''}
+              ${canSeeRsvp ? `<button class="btn btn-sm btn-secondary" onclick="openRsvpList('${t.id}','${(t.title||'Treino').replace(/'/g,'')}')" style="font-size:11px;padding:4px 8px;min-width:44px">👥 Lista</button>` : ''}
             </div>
           </div>
         </div>`;
@@ -1241,6 +1251,75 @@ async function openRsvpList(trainingId, trainingTitle) {
     ? '<div style="color:var(--text2);font-size:13px;padding:12px 0">Ninguém confirmou ainda.</div>'
     : `<div style="font-size:13px;color:var(--text2);margin-bottom:10px">${list.length} confirmado${list.length>1?'s':''}</div>` +
       list.map(r => `<div style="padding:8px 0;border-bottom:1px solid var(--bg3);font-size:14px">✓ ${r.profiles?.name||'Usuário'}</div>`).join('');
+}
+
+// RSVP na aba Treinos (recarrega a aba, não a home)
+async function toggleRsvpTraining(trainingId, isConfirmed) {
+  if (!currentProfile) { toast('Faça login para confirmar presença', 'error'); return; }
+  const alreadyConfirmed = isConfirmed === 'true';
+  if (alreadyConfirmed) {
+    await SB.from('training_rsvp').delete().eq('training_id', trainingId).eq('profile_id', currentProfile.id);
+    toast('Presença removida', 'success');
+  } else {
+    await SB.from('training_rsvp').upsert({ training_id: trainingId, profile_id: currentProfile.id, status: 'confirmado', created_at: new Date().toISOString() }, { onConflict: 'training_id,profile_id' });
+    toast('Presença confirmada! ✓', 'success');
+  }
+  loadTrainings();
+}
+
+// Disparo WhatsApp em massa para confirmação de presença
+async function openWhatsAppDispatch(trainingId) {
+  const t = trainings.find(x => x.id === trainingId);
+  if (!t) return;
+  // Buscar atletas ativos com celular
+  const { data: aths } = await SB.from('athletes').select('name, phone').eq('status', 'ativo');
+  const withPhone = (aths || []).filter(a => a.phone && a.phone.trim());
+  if (withPhone.length === 0) { toast('Nenhum atleta com celular cadastrado', 'error'); return; }
+
+  const d = new Date(t.date + 'T12:00:00');
+  const dateStr = d.toLocaleDateString('pt-BR', { weekday:'long', day:'numeric', month:'long' });
+  const timeStr = t.time ? t.time.substring(0,5) : '';
+  const deadlineStr = t.rsvp_deadline
+    ? `\n⏰ Confirme até: ${new Date(t.rsvp_deadline).toLocaleDateString('pt-BR',{day:'numeric',month:'short'})} ${new Date(t.rsvp_deadline).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`
+    : '';
+
+  const defaultMsg = `Olá, [NOME]! 🏐\n\nConfirme sua presença:\n📅 ${t.title}\n🗓 ${dateStr}${timeStr ? '\n🕐 '+timeStr : ''}${t.location ? '\n📍 '+t.location : ''}${deadlineStr}\n\nResponda para confirmar.`;
+
+  // Criar modal de disparo
+  let existing = document.getElementById('modal-wa-dispatch');
+  if (existing) existing.remove();
+  const modal = document.createElement('div');
+  modal.id = 'modal-wa-dispatch';
+  modal.className = 'modal-overlay';
+  modal.style.zIndex = '9999';
+  modal.innerHTML = `
+    <div class="modal" style="max-height:90vh;overflow-y:auto">
+      <div class="modal-handle"></div>
+      <div class="modal-title">📲 Disparo WhatsApp</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:8px">${withPhone.length} atleta(s) com celular</div>
+      <div class="form-group">
+        <label>Mensagem (use [NOME] para personalizar)</label>
+        <textarea id="wa-msg" rows="6" style="font-size:13px">${defaultMsg}</textarea>
+      </div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Ao clicar em cada atleta, o WhatsApp abre com a mensagem personalizada.</div>
+      <div id="wa-athlete-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
+        ${withPhone.map(a => {
+          const num = a.phone.replace(/\D/g,'');
+          const intl = num.startsWith('55') ? num : '55' + num;
+          return `<button class="btn btn-secondary btn-sm" style="text-align:left;justify-content:flex-start" onclick="sendWaMsg('${intl}','${a.name.replace(/'/g,'')}')">📱 ${a.name} · ${a.phone}</button>`;
+        }).join('')}
+      </div>
+      <button class="btn btn-secondary" onclick="document.getElementById('modal-wa-dispatch').remove()">Fechar</button>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+function sendWaMsg(intlPhone, name) {
+  const msgTemplate = document.getElementById('wa-msg')?.value || '';
+  const msg = msgTemplate.replace('[NOME]', name);
+  const url = 'https://wa.me/' + intlPhone + '?text=' + encodeURIComponent(msg);
+  window.open(url, '_blank');
 }
 
 // ===================== ATHLETES =====================
@@ -1503,17 +1582,48 @@ function filterTrainings(tab) {
   loadTrainings();
 }
 
-function renderTrainings(list) {
+async function renderTrainings(list) {
   const el = document.getElementById('training-list');
   if (!list || list.length === 0) {
     el.innerHTML = `<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><p>Nenhum treino encontrado</p></div>`;
     return;
   }
+
+  // Buscar RSVPs do usuário atual para esses treinos
+  let myRsvps = [];
+  const trainingIds = list.map(t => t.id);
+  if (currentProfile && trainingIds.length > 0) {
+    const { data: rsvpData } = await SB.from('training_rsvp')
+      .select('training_id, status').eq('profile_id', currentProfile.id).in('training_id', trainingIds);
+    myRsvps = rsvpData || [];
+  }
+
+  const role = currentProfile?.role;
+  const canSeeRsvp = role === 'admin' || role === 'tecnico' || role === 'tesoureiro';
+  const now = new Date();
+
   el.innerHTML = list.map(t => {
     const d = new Date(t.date + 'T12:00:00');
     const typeColors = { treino:'var(--accent)', jogo:'var(--success)', amistoso:'var(--info)', outro:'var(--text2)' };
     const color = typeColors[t.type] || 'var(--accent)';
     const gcLink = buildGCalLink(t);
+    const myRsvp = myRsvps.find(r => r.training_id === t.id);
+    const confirmed = myRsvp?.status === 'confirmado';
+    // Verificar prazo de confirmação
+    const deadlinePast = t.rsvp_deadline ? new Date(t.rsvp_deadline) < now : false;
+    const deadlineStr = t.rsvp_deadline
+      ? ` · prazo: ${new Date(t.rsvp_deadline).toLocaleDateString('pt-BR',{day:'numeric',month:'short'})} ${new Date(t.rsvp_deadline).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`
+      : '';
+
+    let confirmBtn = '';
+    if (!deadlinePast || confirmed) {
+      confirmBtn = `<button class="btn btn-sm ${confirmed ? 'btn-success' : 'btn-secondary'}" onclick="toggleRsvpTraining('${t.id}','${confirmed}')" style="font-size:11px;padding:4px 8px">${confirmed ? '✓ Confirmado' : 'Confirmar'}</button>`;
+    } else {
+      confirmBtn = `<button class="btn btn-sm btn-secondary" disabled style="font-size:11px;padding:4px 8px;opacity:0.45">Prazo enc.</button>`;
+    }
+    const rsvpBtn = canSeeRsvp ? `<button class="btn btn-sm btn-secondary" onclick="openRsvpList('${t.id}','${(t.title||'').replace(/'/g,'')}')" style="font-size:11px;padding:4px 8px">👥 Lista</button>` : '';
+    const waBtn = canSeeRsvp ? `<button class="btn btn-sm btn-secondary" onclick="openWhatsAppDispatch('${t.id}')" style="font-size:11px;padding:4px 8px">📲 WhatsApp</button>` : '';
+
     return `<div class="card" style="border-left:3px solid ${color};margin-bottom:10px">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
         <div style="flex:1">
@@ -1522,15 +1632,19 @@ function renderTrainings(list) {
             ${d.toLocaleDateString('pt-BR',{weekday:'short',day:'numeric',month:'short'})} ${t.time ? '• '+t.time.substring(0,5) : ''}
             ${t.location ? ' • '+t.location : ''}
           </div>
+          ${t.rsvp_deadline ? `<div style="font-size:11px;color:${deadlinePast ? 'var(--error)' : 'var(--text2)'};margin-top:2px">⏰${deadlineStr}</div>` : ''}
         </div>
         <span class="badge badge-blue" style="white-space:nowrap">${t.type}</span>
       </div>
-      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center">
+        ${confirmBtn}
+        ${rsvpBtn}
         <button class="btn btn-secondary btn-sm" onclick="openAttendanceModal('${t.id}')">📋 Chamada</button>
         <button class="btn btn-secondary btn-sm" onclick="openPerformanceModal('${t.id}')">📊 Desempenho</button>
-        <a href="${gcLink}" target="_blank" class="btn btn-secondary btn-sm">📅 G.Calendar</a>
-        ${(currentProfile?.role==='admin'||currentProfile?.role==='tecnico') ? `<button class="btn btn-icon" onclick="openTrainingModal('${t.id}')">✏️</button>` : ''}
-        ${currentProfile?.role==='admin' ? `<button class="btn btn-icon" onclick="deleteTraining('${t.id}')">🗑️</button>` : ''}
+        <a href="${gcLink}" target="_blank" class="btn btn-secondary btn-sm">📅 GCal</a>
+        ${waBtn}
+        ${(role==='admin'||role==='tecnico') ? `<button class="btn btn-icon" onclick="openTrainingModal('${t.id}')">✏️</button>` : ''}
+        ${role==='admin' ? `<button class="btn btn-icon" onclick="deleteTraining('${t.id}')">🗑️</button>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -1555,7 +1669,7 @@ function buildGCalLink(t) {
 }
 
 function openTrainingModal(id) {
-  ['tr-title','tr-type','tr-date','tr-time','tr-location','tr-description','tr-id'].forEach(i => {
+  ['tr-title','tr-type','tr-date','tr-time','tr-location','tr-description','tr-id','tr-rsvp-date','tr-rsvp-time'].forEach(i => {
     const el = document.getElementById(i);
     if(el) el.value = '';
   });
@@ -1575,10 +1689,14 @@ function openTrainingModal(id) {
     document.getElementById('tr-time').value = t.time || '';
     document.getElementById('tr-location').value = t.location || '';
     document.getElementById('tr-description').value = t.description || '';
+    if (t.rsvp_deadline) {
+      const dl = new Date(t.rsvp_deadline);
+      document.getElementById('tr-rsvp-date').value = dl.toISOString().split('T')[0];
+      document.getElementById('tr-rsvp-time').value = dl.toTimeString().substring(0,5);
+    }
   } else {
     document.getElementById('training-modal-title').textContent = 'Novo Treino';
     document.getElementById('tr-type').value = 'treino';
-    // Default date = today
     document.getElementById('tr-date').value = new Date().toISOString().split('T')[0];
   }
   openModal('modal-training');
@@ -1599,12 +1717,20 @@ async function saveTraining() {
   const recurCount = parseInt(document.getElementById('tr-recur-count').value) || 8;
   const recurWeeks = parseInt(document.getElementById('tr-recur-weeks').value) || 1;
 
+  const rsvpDateVal = document.getElementById('tr-rsvp-date').value;
+  const rsvpTimeVal = document.getElementById('tr-rsvp-time').value;
+  let rsvpDeadline = null;
+  if (rsvpDateVal) {
+    rsvpDeadline = new Date(rsvpDateVal + 'T' + (rsvpTimeVal || '23:59') + ':00').toISOString();
+  }
+
   const basePayload = {
     title,
     type: document.getElementById('tr-type').value,
     time: document.getElementById('tr-time').value || null,
     location: document.getElementById('tr-location').value.trim() || null,
     description: document.getElementById('tr-description').value.trim() || null,
+    rsvp_deadline: rsvpDeadline,
     created_by: currentProfile?.id || null,
     updated_at: new Date().toISOString()
   };
