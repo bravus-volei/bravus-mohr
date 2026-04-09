@@ -2765,28 +2765,38 @@ async function exportData() {
 
 // ===================== ADMIN: RESET SENHAS =====================
 async function resetAthletePasswords() {
-  if (!confirm('Redefinir senha de TODOS os atletas (roles: atleta, tecnico) para "Atleta"?\n\nAdmins e tesoureiros NÃO serão afetados.')) return;
+  if (!confirm('Redefinir senha de TODOS os atletas e técnicos para "Atleta"?\n\nAdmins e tesoureiros NÃO serão afetados.')) return;
 
-  // Buscar profiles de atletas/tecnicos que têm user_id
-  const { data: profs } = await SB.from('profiles').select('id, user_id, role').in('role', ['atleta', 'tecnico']);
-  const toReset = (profs || []).filter(p => p.user_id);
+  // Buscar roles protegidos
+  const { data: protectedProfs } = await SB.from('profiles').select('user_id, role').in('role', ['admin', 'tesoureiro']);
+  const protectedIds = new Set((protectedProfs || []).map(p => p.user_id).filter(Boolean));
 
-  if (toReset.length === 0) { toast('Nenhum atleta com conta encontrado', 'error'); return; }
+  // Buscar TODOS os usuários via admin API
+  const res = await fetch(`${_SB_URL}/auth/v1/admin/users?per_page=1000`, {
+    headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY }
+  });
+  const body = await res.json();
+  const allUsers = body.users || [];
+
+  // Filtrar: só quem não é admin/tesoureiro
+  const toReset = allUsers.filter(u => !protectedIds.has(u.id));
+
+  if (toReset.length === 0) { toast('Nenhuma conta encontrada para resetar', 'error'); return; }
 
   toast(`Redefinindo senha de ${toReset.length} conta(s)...`, 'info');
 
   let ok = 0, fail = 0;
-  for (const p of toReset) {
-    const res = await fetch(`${_SB_URL}/auth/v1/admin/users/${p.user_id}`, {
+  for (const u of toReset) {
+    const r = await fetch(`${_SB_URL}/auth/v1/admin/users/${u.id}`, {
       method: 'PUT',
       headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ password: 'Atleta' })
     });
-    if (res.ok) ok++; else fail++;
+    if (r.ok) ok++; else fail++;
   }
 
   if (fail === 0) toast(`✅ ${ok} senha(s) redefinida(s) para "Atleta"!`, 'success');
-  else toast(`${ok} OK, ${fail} falha(s). Tente novamente.`, 'error');
+  else toast(`${ok} OK · ${fail} falha(s)`, 'error');
 }
 
 // ===================== SERVICE WORKER =====================
