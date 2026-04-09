@@ -1234,7 +1234,7 @@ async function loadHome() {
               <div style="font-size:12px;color:var(--text2);margin-top:3px">${dateStr}${t.time ? ' · '+t.time : ''}${t.location ? ' · '+t.location : ''}</div>
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0">
-              <button class="btn btn-sm ${confirmed ? 'btn-success' : 'btn-secondary'}" onclick="toggleRsvp('${t.id}','${confirmed}')" style="font-size:11px;padding:4px 8px">${confirmed ? '✓ Confirmado' : 'Confirmar'}</button>
+              <button class="btn btn-sm ${confirmed ? 'btn-success' : 'btn-secondary'}" onclick="toggleRsvp('${t.id}','${confirmed}')" style="font-size:11px;padding:4px 8px">${confirmed ? '✓ Confirm.' : 'Confirmar'}</button>
               ${canSeeRsvp ? `<button class="btn btn-sm btn-secondary" onclick="openRsvpList('${t.id}','${(t.title||'Treino').replace(/'/g,'')}')" style="font-size:11px;padding:4px 8px;min-width:44px">👥 Lista</button>` : ''}
             </div>
           </div>
@@ -1357,10 +1357,12 @@ async function openWhatsAppDispatch(trainingId) {
           return `<button class="btn btn-secondary btn-sm" style="text-align:left;justify-content:flex-start" onclick="sendWaMsg('${intl}','${a.name.replace(/'/g,'')}')">📱 ${a.name} · ${a.phone}</button>`;
         }).join('')}
       </div>
-      <button class="btn btn-secondary" onclick="document.getElementById('modal-wa-dispatch').remove()">Fechar</button>
+      <button class="btn btn-secondary" onclick="const m=document.getElementById('modal-wa-dispatch');m.classList.remove('active');setTimeout(()=>m.remove(),200)">Fechar</button>
     </div>`;
   document.body.appendChild(modal);
-  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  // Precisa de classe active para aparecer (mesmo CSS dos outros modais)
+  requestAnimationFrame(() => modal.classList.add('active'));
+  modal.addEventListener('click', e => { if (e.target === modal) { modal.classList.remove('active'); setTimeout(() => modal.remove(), 200); } });
 }
 
 function sendWaMsg(intlPhone, name) {
@@ -1671,7 +1673,7 @@ async function renderTrainings(list) {
 
     let confirmBtn = '';
     if (!deadlinePast || confirmed) {
-      confirmBtn = `<button class="btn btn-sm ${confirmed ? 'btn-success' : 'btn-secondary'}" onclick="toggleRsvpTraining('${t.id}','${confirmed}')" style="font-size:11px;padding:4px 8px">${confirmed ? '✓ Confirmado' : 'Confirmar'}</button>`;
+      confirmBtn = `<button class="btn btn-sm ${confirmed ? 'btn-success' : 'btn-secondary'}" onclick="toggleRsvpTraining('${t.id}','${confirmed}')" style="font-size:11px;padding:4px 8px">${confirmed ? '✓ Confirm.' : 'Confirmar'}</button>`;
     } else {
       confirmBtn = `<button class="btn btn-sm btn-secondary" disabled style="font-size:11px;padding:4px 8px;opacity:0.45">Prazo enc.</button>`;
     }
