@@ -2031,13 +2031,13 @@ function renderFeeList(list) {
 
     return `<div style="margin-bottom:8px;border-radius:12px;overflow:hidden;border:1px solid var(--bg3)">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg2);cursor:pointer" onclick="toggleFeeGroup('fg-${key}',this)">
-        <div>
-          <span style="font-weight:700;font-size:14px">Mensalidades ${monthNames[parseInt(g.month)]} ${g.year}</span>
+        <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+          <span class="fg-arrow-fg-${key}" style="font-size:12px;color:var(--text2);flex-shrink:0">${isOpen?'▼':'▶'}</span>
+          <span style="font-weight:700;font-size:14px;white-space:nowrap">Mensalidades ${monthNames[parseInt(g.month)]} ${g.year}</span>
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
           <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:rgba(234,179,8,0.18);color:#eab308">${pend} pend.</span>
           <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:rgba(34,197,94,0.18);color:#22c55e">${paid} rec.</span>
-          <span style="font-size:11px;color:var(--text2)">▼</span>
         </div>
       </div>
       <div id="fg-${key}" style="display:${isOpen?'block':'none'};padding:8px">
@@ -2053,7 +2053,8 @@ function toggleFeeGroup(id, header) {
   if (!el) return;
   const isOpen = el.style.display !== 'none';
   el.style.display = isOpen ? 'none' : 'block';
-  const arrow = header.querySelector('span:last-child');
+  // Atualizar seta (primeiro span dentro do header)
+  const arrow = header.querySelector('span:first-child');
   if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
 }
 
@@ -2191,15 +2192,17 @@ async function loadExtraCharges() {
 
     return `<div style="margin-bottom:8px;border-radius:12px;overflow:hidden;border:1px solid var(--bg3)">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg2);cursor:pointer" onclick="toggleFeeGroup('cg-${c.id}',this)">
-        <div style="flex:1">
-          <div style="font-weight:700;font-size:14px">${c.title}</div>
-          <div style="font-size:11px;color:var(--text2);margin-top:2px">Vence: ${dueDate} · R$ ${Number(c.amount).toFixed(2)}</div>
+        <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+          <span style="font-size:12px;color:var(--text2);flex-shrink:0">${isOpen?'▼':'▶'}</span>
+          <div style="min-width:0">
+            <div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.title}</div>
+            <div style="font-size:11px;color:var(--text2);margin-top:2px">Vence: ${dueDate} · R$ ${Number(c.amount).toFixed(2)}</div>
+          </div>
         </div>
-        <div style="display:flex;align-items:center;gap:6px">
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
           <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:rgba(234,179,8,0.18);color:#eab308">${pend} pend.</span>
           <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:rgba(34,197,94,0.18);color:#22c55e">${paid} rec.</span>
           ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();deleteCharge('${c.id}')" style="padding:3px 7px;color:var(--error)">🗑️</button>` : ''}
-          <span style="font-size:11px;color:var(--text2)">▼</span>
         </div>
       </div>
       <div id="cg-${c.id}" style="display:${isOpen?'block':'none'};padding:8px">
@@ -2673,6 +2676,9 @@ function showSettingsPage() {
           <div class="divider"></div>
           <button class="btn btn-secondary btn-block" onclick="exportData()">📤 Exportar Dados (JSON)</button>
           <div style="margin-top:10px">
+          <button class="btn btn-secondary btn-block" onclick="resetAthletePasswords()">🔑 Redefinir senhas dos atletas para "Atleta"</button>
+          </div>
+          <div style="margin-top:10px">
           <button class="btn btn-danger btn-block" onclick="doLogout()">Sair do Sistema</button>
           </div>
         </div>
@@ -2753,6 +2759,32 @@ async function exportData() {
   a.href = url; a.download = `bravus-mohr-${new Date().toISOString().split('T')[0]}.json`;
   a.click(); URL.revokeObjectURL(url);
   toast('Dados exportados!', 'success');
+}
+
+// ===================== ADMIN: RESET SENHAS =====================
+async function resetAthletePasswords() {
+  if (!confirm('Redefinir senha de TODOS os atletas (roles: atleta, tecnico) para "Atleta"?\n\nAdmins e tesoureiros NÃO serão afetados.')) return;
+
+  // Buscar profiles de atletas/tecnicos que têm user_id
+  const { data: profs } = await SB.from('profiles').select('id, user_id, role').in('role', ['atleta', 'tecnico']);
+  const toReset = (profs || []).filter(p => p.user_id);
+
+  if (toReset.length === 0) { toast('Nenhum atleta com conta encontrado', 'error'); return; }
+
+  toast(`Redefinindo senha de ${toReset.length} conta(s)...`, 'info');
+
+  let ok = 0, fail = 0;
+  for (const p of toReset) {
+    const res = await fetch(`${_SB_URL}/auth/v1/admin/users/${p.user_id}`, {
+      method: 'PUT',
+      headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: 'Atleta' })
+    });
+    if (res.ok) ok++; else fail++;
+  }
+
+  if (fail === 0) toast(`✅ ${ok} senha(s) redefinida(s) para "Atleta"!`, 'success');
+  else toast(`${ok} OK, ${fail} falha(s). Tente novamente.`, 'error');
 }
 
 // ===================== SERVICE WORKER =====================
