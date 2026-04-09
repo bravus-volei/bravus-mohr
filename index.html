@@ -2765,38 +2765,59 @@ async function exportData() {
 
 // ===================== ADMIN: RESET SENHAS =====================
 async function resetAthletePasswords() {
-  if (!confirm('Redefinir senha de TODOS os atletas e técnicos para "Atleta"?\n\nAdmins e tesoureiros NÃO serão afetados.')) return;
+  if (!confirm('Criar/redefinir senha "Atleta" para todos os atletas e técnicos?\n\nAdmins e tesoureiros NÃO serão afetados.')) return;
 
-  // Buscar roles protegidos
-  const { data: protectedProfs } = await SB.from('profiles').select('user_id, role').in('role', ['admin', 'tesoureiro']);
+  // Buscar e-mails protegidos (admin/tesoureiro)
+  const { data: protectedProfs } = await SB.from('profiles').select('user_id, role, email').in('role', ['admin', 'tesoureiro']);
+  const protectedEmails = new Set((protectedProfs || []).map(p => p.email).filter(Boolean));
   const protectedIds = new Set((protectedProfs || []).map(p => p.user_id).filter(Boolean));
 
-  // Buscar TODOS os usuários via admin API
+  // Buscar atletas com e-mail cadastrado
+  const { data: athData } = await SB.from('athletes').select('email, name').eq('status', 'ativo');
+  const athEmails = (athData || []).filter(a => a.email && a.email.trim() && !protectedEmails.has(a.email));
+
+  if (athEmails.length === 0) { toast('Nenhum atleta com e-mail encontrado', 'error'); return; }
+
+  // Buscar contas existentes no Auth
   const res = await fetch(`${_SB_URL}/auth/v1/admin/users?per_page=1000`, {
     headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY }
   });
   const body = await res.json();
-  const allUsers = body.users || [];
+  const existingUsers = body.users || [];
+  const existingByEmail = {};
+  existingUsers.forEach(u => { if (u.email) existingByEmail[u.email.toLowerCase()] = u.id; });
 
-  // Filtrar: só quem não é admin/tesoureiro
-  const toReset = allUsers.filter(u => !protectedIds.has(u.id));
+  toast(`Processando ${athEmails.length} atleta(s)...`, 'info');
 
-  if (toReset.length === 0) { toast('Nenhuma conta encontrada para resetar', 'error'); return; }
+  let ok = 0, created = 0, fail = 0;
+  for (const ath of athEmails) {
+    const email = ath.email.trim().toLowerCase();
+    const existingId = existingByEmail[email];
 
-  toast(`Redefinindo senha de ${toReset.length} conta(s)...`, 'info');
-
-  let ok = 0, fail = 0;
-  for (const u of toReset) {
-    const r = await fetch(`${_SB_URL}/auth/v1/admin/users/${u.id}`, {
-      method: 'PUT',
-      headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: 'Atleta' })
-    });
-    if (r.ok) ok++; else fail++;
+    if (existingId && !protectedIds.has(existingId)) {
+      // Conta existe — resetar senha
+      const r = await fetch(`${_SB_URL}/auth/v1/admin/users/${existingId}`, {
+        method: 'PUT',
+        headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: 'Atleta' })
+      });
+      if (r.ok) ok++; else fail++;
+    } else if (!existingId) {
+      // Conta não existe — criar
+      const r = await fetch(`${_SB_URL}/auth/v1/admin/users`, {
+        method: 'POST',
+        headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: ath.email.trim(), password: 'Atleta', email_confirm: true })
+      });
+      if (r.ok) created++; else fail++;
+    }
   }
 
-  if (fail === 0) toast(`✅ ${ok} senha(s) redefinida(s) para "Atleta"!`, 'success');
-  else toast(`${ok} OK · ${fail} falha(s)`, 'error');
+  const msg = [];
+  if (ok > 0) msg.push(`${ok} senha(s) redefinida(s)`);
+  if (created > 0) msg.push(`${created} conta(s) criada(s)`);
+  if (fail > 0) msg.push(`${fail} falha(s)`);
+  toast((fail === 0 ? '✅ ' : '⚠️ ') + msg.join(' · '), fail === 0 ? 'success' : 'error');
 }
 
 // ===================== SERVICE WORKER =====================
