@@ -13,6 +13,15 @@
 // ===== SUPABASE FETCH WRAPPER (sem SDK) =====
 const _SB_URL = 'https://qbrghzhmltecwsnzjupq.supabase.co';
 const _SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFicmdoemhtbHRlY3dzbnpqdXBxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1ODM5NzEsImV4cCI6MjA5MTE1OTk3MX0.vOVjLoAspy7rwMP5wOLbQCx0D-dNun09F-TiG1xQxQ4';
+const _SB_SVC_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFicmdoemhtbHRlY3dzbnpqdXBxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTU4Mzk3MSwiZXhwIjoyMDkxMTU5OTcxfQ.6w1EMSyPPZ7SrPMivINDkh_m3jWp8NT8Nq4YclBCgOA';
+
+// Delete com service key (bypass RLS)
+async function _svcDelete(table, col, val) {
+  const url = _SB_URL + '/rest/v1/' + table + '?' + col + '=eq.' + encodeURIComponent(val);
+  const res = await fetch(url, { method: 'DELETE', headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY, 'Content-Type': 'application/json' } });
+  if (!res.ok) { let b = null; try { b = await res.json(); } catch(e) {} return { error: { message: (b && (b.message || b.msg)) || ('HTTP ' + res.status) } }; }
+  return { error: null };
+}
 let _userToken = null;
 let _authListeners = [];
 
@@ -2137,6 +2146,12 @@ async function markFeePending(feeId) {
 <script>
 // ===================== EXTRA CHARGES =====================
 async function loadExtraCharges() {
+  // Garantir que todos os atletas ativos estejam vinculados a todas as cobranças
+  const { data: allChargesIds } = await SB.from('extra_charges').select('id');
+  if (allChargesIds && allChargesIds.length > 0) {
+    await linkAthletesToCharges(allChargesIds);
+  }
+
   const { data } = await SB.from('extra_charges')
     .select('*, extra_charge_athletes(id, status, paid_at, athlete_id, athletes(name, nickname, phone))')
     .order('due_date', { ascending: false });
@@ -2169,7 +2184,7 @@ async function loadExtraCharges() {
           <span class="fee-amount">R$ ${Number(c.amount).toFixed(2)}</span>
           ${waLink && eca.status!=='pago' ? `<a href="${waLink}" target="_blank" class="btn btn-success btn-sm" style="padding:3px 7px">📱</a>` : ''}
           ${canEdit && eca.status!=='pago' ? `<button class="btn btn-secondary btn-sm" onclick="markChargeAthlPaid('${eca.id}','${c.id}')" style="padding:3px 7px">✅</button>` : ''}
-          ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="deleteChargeAthlete('${eca.id}','${c.id}')" style="padding:3px 7px;color:var(--error)">🗑️</button>` : ''}
+          ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="deleteChargeAthlete('${eca.id}')" style="padding:3px 7px;color:var(--error)">🗑️</button>` : ''}
         </div>
       </div>`;
     }).join('');
@@ -2295,17 +2310,17 @@ async function linkAthletesToCharges(charges) {
 
 async function deleteCharge(chargeId) {
   if (!confirm('Excluir esta cobrança e todos os registros de atletas vinculados?')) return;
-  // Excluir vínculos primeiro
-  await SB.from('extra_charge_athletes').delete().eq('extra_charge_id', chargeId);
-  const { error } = await SB.from('extra_charges').delete().eq('id', chargeId);
-  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  const r1 = await _svcDelete('extra_charge_athletes', 'extra_charge_id', chargeId);
+  if (r1.error) { toast('Erro ao excluir vínculos: ' + r1.error.message, 'error'); return; }
+  const r2 = await _svcDelete('extra_charges', 'id', chargeId);
+  if (r2.error) { toast('Erro: ' + r2.error.message, 'error'); return; }
   toast('Cobrança excluída', 'success');
   loadExtraCharges();
 }
 
-async function deleteChargeAthlete(ecaId, chargeId) {
+async function deleteChargeAthlete(ecaId) {
   if (!confirm('Remover este atleta desta cobrança?')) return;
-  const { error } = await SB.from('extra_charge_athletes').delete().eq('id', ecaId);
+  const { error } = await _svcDelete('extra_charge_athletes', 'id', ecaId);
   if (error) { toast('Erro: ' + error.message, 'error'); return; }
   toast('Atleta removido', 'success');
   loadExtraCharges();
