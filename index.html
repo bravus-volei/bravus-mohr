@@ -1510,7 +1510,7 @@ async function openAthleteDetail(id) {
   const feeAmt = a.monthly_fee_value || settings.fee_amount || 50;
   const pixKey = settings.pix_key || '';
   const pixLine = pixKey ? `\n\n💰 Chave PIX: ${pixKey}` : '';
-  const waMsgTes = encodeURIComponent(`Olá ${a.nickname||a.name}! 🏐\n\nSua mensalidade de R$ ${Number(feeAmt).toFixed(2)} está aguardando pagamento.${pixLine}\n\n_Bravus Mohr Vôlei_`);
+  const waMsgTes = encodeURIComponent(`Olá ${a.nickname||a.name}! 🏐\n\nSua mensalidade de R$ ${Number(feeAmt).toFixed(2)} está aguardando pagamento.${pixLine}\n\n_Tesoureiro_\n_Bravus Vôlei_`);
   const waLinkTes = treasPhone ? `https://wa.me/55${treasPhone}?text=${waMsgTes}` : null;
   const waLinkAthleta = phone ? `https://wa.me/55${phone}?text=${waMsgTes}` : null;
 
@@ -1967,7 +1967,7 @@ function renderFeeList(list) {
       const treasPhone = settings.treasurer_phone ? settings.treasurer_phone.replace(/\D/g,'') : null;
       const pixKey = settings.pix_key || '';
       const pixLine = pixKey ? `\n\n💰 Chave PIX: ${pixKey}` : '';
-      const wamsg = encodeURIComponent(`Olá ${ath?.nickname||ath?.name}! 🏐\n\nSua mensalidade ${f.month}/${f.year} de R$ ${Number(feeAmt).toFixed(2)} está aguardando pagamento.${pixLine}\n\n_Bravus Mohr Vôlei_`);
+      const wamsg = encodeURIComponent(`Olá ${ath?.nickname||ath?.name}! 🏐\n\nSua mensalidade ${f.month}/${f.year} de R$ ${Number(feeAmt).toFixed(2)} está aguardando pagamento.${pixLine}\n\n_Tesoureiro_\n_Bravus Vôlei_`);
       const waTarget = phone || treasPhone;
       const waLink = waTarget ? `https://wa.me/55${waTarget}?text=${wamsg}` : null;
       return `<div class="fee-item" onclick="openFeeDetail('${f.id}')">
@@ -2199,7 +2199,9 @@ async function openChargeDetail(chargeId) {
   const athleteRows = (c.extra_charge_athletes || []).map(eca => {
     const ath = eca.athletes;
     const phone = ath?.phone ? ath.phone.replace(/\D/g,'') : null;
-    const wamsg = encodeURIComponent(`Olá ${ath?.nickname||ath?.name}! Cobrança "${c.title}" R$ ${c.amount} aguardando. PIX: ${settings.pix_key||''} — TESOUREIRO BRAVUS`);
+    const pixKeyE = settings.pix_key || '';
+    const pixLineE = pixKeyE ? `\n\n💰 Chave PIX: ${pixKeyE}` : '';
+    const wamsg = encodeURIComponent(`Olá ${ath?.nickname||ath?.name}! 🏐\n\n${c.title} — R$ ${Number(c.amount).toFixed(2)} aguardando pagamento.${pixLineE}\n\n_Tesoureiro_\n_Bravus Vôlei_`);
     const waLink = phone ? `https://wa.me/55${phone}?text=${wamsg}` : null;
     return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--bg3);font-size:13px">
       <div style="flex:1">${ath?.nickname||ath?.name}</div>
