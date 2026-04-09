@@ -415,6 +415,12 @@ h1,h2,h3{font-weight:700}
 @keyframes spin{to{transform:rotate(360deg)}}
 .loading-overlay{position:fixed;inset:0;background:rgba(15,23,42,.8);display:flex;align-items:center;justify-content:center;z-index:9000}
 
+/* ATHLETE SELECTOR */
+.ath-select-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;transition:background .15s}
+.ath-select-item:hover{background:var(--bg3)}
+.ath-select-item.selected{background:rgba(245,158,11,.15)}
+.ath-select-item input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);cursor:pointer;flex-shrink:0}
+
 /* EXTRA CHARGE */
 .charge-item{background:var(--bg2);border-radius:12px;padding:14px;margin-bottom:10px}
 .charge-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
@@ -855,7 +861,16 @@ h1,h2,h3{font-weight:700}
         <input type="number" id="ch-installments" value="3" min="2" max="24">
       </div>
     </div>
+    <div class="form-group" id="ch-dest-section">
+      <label>Destinatários</label>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button type="button" id="ch-dest-todos-btn" class="btn btn-primary btn-sm" style="flex:1" onclick="setChargeDestino('todos')">Todos os atletas</button>
+        <button type="button" id="ch-dest-especificos-btn" class="btn btn-secondary btn-sm" style="flex:1" onclick="setChargeDestino('especificos')">Atletas específicos</button>
+      </div>
+      <div id="ch-atletas-lista" style="display:none;max-height:180px;overflow-y:auto;border:1px solid var(--bg3);border-radius:10px;padding:4px"></div>
+    </div>
     <input type="hidden" id="ch-id">
+    <input type="hidden" id="ch-destino" value="todos">
     <div class="modal-actions">
       <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-charge')">Cancelar</button>
       <button class="btn btn-primary" style="flex:2" onclick="saveCharge()">Salvar</button>
@@ -2340,7 +2355,7 @@ async function markFeePending(feeId) {
 async function loadExtraCharges() {
   const { data } = await SB.from('extra_charges')
     .select('*, extra_charge_athletes(id, status, paid_at, athlete_id, athletes(name, nickname, phone))')
-    .order('due_date', { ascending: false });
+    .order('created_at', { ascending: false });
   const el = document.getElementById('extra-charge-list');
   if (!data || data.length === 0) {
     el.innerHTML = `<div class="empty-state"><p>Nenhuma cobrança extra cadastrada.</p></div>`;
@@ -2399,20 +2414,34 @@ async function loadExtraCharges() {
   }).join('');
 }
 
-function openChargeModal(id) {
+async function openChargeModal(id) {
   ['ch-title','ch-description','ch-amount','ch-due-date','ch-id','ch-installments'].forEach(i => {
     const el = document.getElementById(i); if(el) el.value='';
   });
   document.getElementById('ch-recurrent').checked = false;
   document.getElementById('charge-recurrent-options').style.display = 'none';
   document.getElementById('ch-installments').value = '3';
+  // Reset destino
+  setChargeDestino('todos');
+  // Carregar lista de atletas para seleção
+  const { data: athList } = await SB.from('athletes').select('id, name, nickname').eq('status','ativo').order('name');
+  const lista = document.getElementById('ch-atletas-lista');
+  if (lista && athList) {
+    lista.innerHTML = athList.map(a => `
+      <div class="ath-select-item" id="ath-sel-${a.id}" onclick="toggleAthleteSelect('${a.id}',this)">
+        <input type="checkbox" id="chk-${a.id}" onclick="event.stopPropagation();toggleAthleteSelect('${a.id}',this.closest('.ath-select-item'))">
+        <span>${a.nickname || a.name}</span>
+      </div>`).join('');
+  }
   if (id) {
     document.getElementById('charge-modal-title').textContent = 'Editar Cobrança';
     document.getElementById('ch-id').value = id;
-    // Would need to fetch, skip for now
+    // Em modo edição, ocultar seção de destino (atletas já estão vinculados)
+    document.getElementById('ch-dest-section').style.display = 'none';
   } else {
     document.getElementById('charge-modal-title').textContent = 'Nova Cobrança';
     document.getElementById('ch-due-date').value = new Date().toISOString().split('T')[0];
+    document.getElementById('ch-dest-section').style.display = '';
   }
   openModal('modal-charge');
 }
@@ -2422,6 +2451,38 @@ function toggleChargeRecurrent() {
   document.getElementById('charge-recurrent-options').style.display = checked ? 'block' : 'none';
 }
 
+function setChargeDestino(tipo) {
+  document.getElementById('ch-destino').value = tipo;
+  const lista = document.getElementById('ch-atletas-lista');
+  const btnTodos = document.getElementById('ch-dest-todos-btn');
+  const btnEsp = document.getElementById('ch-dest-especificos-btn');
+  if (tipo === 'todos') {
+    lista.style.display = 'none';
+    btnTodos.className = 'btn btn-primary btn-sm';
+    btnEsp.className = 'btn btn-secondary btn-sm';
+    // Desmarcar todos
+    lista.querySelectorAll('input[type=checkbox]').forEach(c => { c.checked = false; c.closest('.ath-select-item').classList.remove('selected'); });
+  } else {
+    lista.style.display = 'block';
+    btnTodos.className = 'btn btn-secondary btn-sm';
+    btnEsp.className = 'btn btn-primary btn-sm';
+  }
+}
+
+function toggleAthleteSelect(athId, el) {
+  const chk = document.getElementById('chk-' + athId);
+  chk.checked = !chk.checked;
+  el.classList.toggle('selected', chk.checked);
+}
+
+function getSelectedAthletes() {
+  const lista = document.getElementById('ch-atletas-lista');
+  if (!lista) return [];
+  return Array.from(lista.querySelectorAll('input[type=checkbox]'))
+    .filter(c => c.checked)
+    .map(c => c.id.replace('chk-', ''));
+}
+
 async function saveCharge() {
   const title = document.getElementById('ch-title').value.trim();
   const amount = document.getElementById('ch-amount').value;
@@ -2429,6 +2490,11 @@ async function saveCharge() {
   if (!title || !amount) { toast('Título e valor são obrigatórios', 'error'); return; }
 
   const id = document.getElementById('ch-id').value;
+  const destino = document.getElementById('ch-destino').value;
+  const atletasSelecionados = destino === 'especificos' ? getSelectedAthletes() : null;
+  if (destino === 'especificos' && (!atletasSelecionados || atletasSelecionados.length === 0)) {
+    toast('Selecione ao menos um atleta', 'error'); return;
+  }
   const isRecurrent = document.getElementById('ch-recurrent').checked;
   const installments = isRecurrent ? (parseInt(document.getElementById('ch-installments').value) || 1) : 1;
 
@@ -2461,9 +2527,9 @@ async function saveCharge() {
     const { error } = await SB.from('extra_charges').insert(rows);
     if (error) { toast('Erro: ' + error.message, 'error'); return; }
 
-    // For each new charge, link all active athletes
+    // For each new charge, link athletes
     const { data: charges } = await SB.from('extra_charges').select('id').order('created_at', { ascending: false }).limit(installments);
-    await linkAthletesToCharges(charges);
+    await linkAthletesToCharges(charges, atletasSelecionados);
     toast(`${installments} cobranças criadas!`, 'success');
   } else {
     if (id) {
@@ -2473,10 +2539,9 @@ async function saveCharge() {
       payload.created_at = new Date().toISOString();
       const { error } = await SB.from('extra_charges').insert(payload);
       if (error) { toast('Erro: ' + error.message, 'error'); return; }
-      // Buscar a cobrança recém criada pelo título+created_at para vincular atletas
       const { data: newCharges } = await SB.from('extra_charges')
         .select('id').eq('title', payload.title).order('created_at', { ascending: false }).limit(1);
-      if (newCharges && newCharges.length > 0) await linkAthletesToCharges(newCharges);
+      if (newCharges && newCharges.length > 0) await linkAthletesToCharges(newCharges, atletasSelecionados);
     }
     toast(id ? 'Cobrança atualizada!' : 'Cobrança criada!', 'success');
   }
@@ -2484,14 +2549,20 @@ async function saveCharge() {
   loadExtraCharges();
 }
 
-async function linkAthletesToCharges(charges) {
-  const { data: athData } = await SB.from('athletes').select('id').eq('status','ativo');
-  if (!athData || !charges || charges.length === 0) return;
+async function linkAthletesToCharges(charges, specificAthleteIds = null) {
+  // Se specificAthleteIds fornecido, usa esses; senão busca todos os ativos
+  let athIds;
+  if (specificAthleteIds && specificAthleteIds.length > 0) {
+    athIds = specificAthleteIds.map(id => ({ id }));
+  } else {
+    const { data: athData } = await SB.from('athletes').select('id').eq('status','ativo');
+    athIds = athData || [];
+  }
+  if (!athIds.length || !charges || charges.length === 0) return;
   for (const ch of charges) {
-    // Buscar atletas já vinculados a esta cobrança
     const { data: existing } = await SB.from('extra_charge_athletes').select('athlete_id').eq('extra_charge_id', ch.id);
     const existingIds = new Set((existing || []).map(x => x.athlete_id));
-    const rows = athData
+    const rows = athIds
       .filter(a => !existingIds.has(a.id))
       .map(a => ({ extra_charge_id: ch.id, athlete_id: a.id, status: 'pendente', created_at: new Date().toISOString() }));
     if (rows.length > 0) await SB.from('extra_charge_athletes').insert(rows);
