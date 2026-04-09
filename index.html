@@ -553,6 +553,7 @@ h1,h2,h3{font-weight:700}
     <div class="tabs">
       <button class="tab active" onclick="showFeesTab('mensalidades')" id="ftab-mensalidades">Mensalidades</button>
       <button class="tab" onclick="showFeesTab('extras')" id="ftab-extras">Cobranças</button>
+      <button class="tab" onclick="showFeesTab('caixa')" id="ftab-caixa" style="display:none">📒 Caixa</button>
     </div>
     <div id="fees-mensalidades">
       <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
@@ -566,6 +567,17 @@ h1,h2,h3{font-weight:700}
         <button class="btn btn-primary btn-sm" id="btn-add-charge" onclick="openChargeModal()">+ Nova</button>
       </div>
       <div id="extra-charge-list"></div>
+    </div>
+    <div id="fees-caixa" style="display:none">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="btn btn-primary" style="flex:1" onclick="openCaixaModal()">+ Lançamento</button>
+        <button class="btn btn-secondary" style="flex:1" onclick="importarPagamentosNoCaixa()">⬇️ Importar</button>
+      </div>
+      <div id="caixa-saldo-bar" style="background:var(--bg2);border-radius:12px;padding:12px 16px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:13px;color:var(--text2)">Saldo disponível</span>
+        <span id="caixa-saldo" style="font-size:20px;font-weight:700;color:var(--success)">R$ 0,00</span>
+      </div>
+      <div id="caixa-list"></div>
     </div>
   </div>
 
@@ -2069,17 +2081,26 @@ async function savePerformance() {
 // ===================== FEES =====================
 function showFeesTab(tab) {
   feesTab = tab;
+  const role = currentProfile?.role;
+  const canFinanceiro = role === 'admin' || role === 'tesoureiro';
+
+  // Mostrar aba Caixa apenas para admin/tesoureiro
+  const tabCaixa = document.getElementById('ftab-caixa');
+  if (tabCaixa) tabCaixa.style.display = canFinanceiro ? '' : 'none';
+
   document.getElementById('fees-mensalidades').style.display = tab === 'mensalidades' ? 'block' : 'none';
   document.getElementById('fees-extras').style.display = tab === 'extras' ? 'block' : 'none';
+  document.getElementById('fees-caixa').style.display = tab === 'caixa' ? 'block' : 'none';
   document.getElementById('ftab-mensalidades').classList.toggle('active', tab === 'mensalidades');
   document.getElementById('ftab-extras').classList.toggle('active', tab === 'extras');
+  document.getElementById('ftab-caixa').classList.toggle('active', tab === 'caixa');
+
   if (tab === 'extras') loadExtraCharges();
+  else if (tab === 'caixa') loadCaixa();
   else loadFees();
 
-  const role = currentProfile?.role;
-  const canAdd = role === 'admin' || role === 'tesoureiro';
   const btnAdd = document.getElementById('btn-add-charge');
-  if (btnAdd) btnAdd.style.display = canAdd ? '' : 'none';
+  if (btnAdd) btnAdd.style.display = canFinanceiro ? '' : 'none';
 }
 
 function openGenerateFeesModal() {
@@ -2100,8 +2121,11 @@ async function loadFees() {
   allFees = data || [];
   renderFeeList(allFees);
   const role = currentProfile?.role;
-  const canGenerate = role === 'admin' || role === 'tesoureiro';
-  document.getElementById('btn-gen-fees').style.display = canGenerate ? '' : 'none';
+  const canFinanceiro = role === 'admin' || role === 'tesoureiro';
+  document.getElementById('btn-gen-fees').style.display = canFinanceiro ? '' : 'none';
+  // Mostrar aba Caixa apenas para admin/tesoureiro
+  const tabCaixa = document.getElementById('ftab-caixa');
+  if (tabCaixa) tabCaixa.style.display = canFinanceiro ? '' : 'none';
 }
 
 function _feeBadge(status) {
@@ -3071,12 +3095,11 @@ function showSettingsPage() {
     pg.className = 'page';
     pg.innerHTML = `
       <div class="sec-title" style="margin-bottom:14px">Configurações</div>
-      <div class="tabs" style="flex-wrap:wrap;gap:4px">
+      <div class="tabs">
         <button class="tab active" onclick="showSettingsTab('time')" id="stab-time">Time</button>
         <button class="tab" onclick="showSettingsTab('financeiro')" id="stab-financeiro">Financeiro</button>
         <button class="tab" onclick="showSettingsTab('posicoes')" id="stab-posicoes">Posições</button>
         <button class="tab" onclick="showSettingsTab('sistema')" id="stab-sistema">Sistema</button>
-        <button class="tab" onclick="showSettingsTab('caixa')" id="stab-caixa">📒 Caixa</button>
       </div>
       <div id="settings-time" class="settings-tab-content active">
         <div class="card">
@@ -3117,17 +3140,7 @@ function showSettingsPage() {
           </div>
         </div>
       </div>
-      <div id="settings-caixa" class="settings-tab-content">
-        <div style="display:flex;gap:8px;margin-bottom:12px">
-          <button class="btn btn-primary" style="flex:1" onclick="openCaixaModal()">+ Lançamento</button>
-          <button class="btn btn-secondary" style="flex:1" onclick="importarPagamentosNoCaixa()">⬇️ Importar Pagamentos</button>
-        </div>
-        <div id="caixa-saldo-bar" style="background:var(--bg2);border-radius:12px;padding:12px 16px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
-          <span style="font-size:13px;color:var(--text2)">Saldo disponível</span>
-          <span id="caixa-saldo" style="font-size:20px;font-weight:700;color:var(--success)">R$ 0,00</span>
-        </div>
-        <div id="caixa-list"></div>
-      </div>`;
+      `;
     document.getElementById('app').insertBefore(pg, document.querySelector('.bottom-nav'));
   }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -3136,13 +3149,12 @@ function showSettingsPage() {
 }
 
 function showSettingsTab(tab) {
-  ['time','financeiro','posicoes','sistema','caixa'].forEach(t => {
+  ['time','financeiro','posicoes','sistema'].forEach(t => {
     document.getElementById('settings-'+t).classList.toggle('active', t===tab);
     document.getElementById('stab-'+t).classList.toggle('active', t===tab);
   });
   if (tab === 'financeiro') updatePixQr();
   if (tab === 'posicoes') renderPositions();
-  if (tab === 'caixa') loadCaixa();
 }
 
 function loadSettingsForm() {
