@@ -2153,7 +2153,10 @@ function renderFeeList(list) {
           ${_feeBadge(f.status)}
           <span class="fee-amount">R$ ${Number(f.amount).toFixed(2)}</span>
           ${waLink && f.status !== 'pago' ? `<a href="${waLink}" target="_blank" class="btn btn-success btn-sm" onclick="event.stopPropagation()" style="padding:3px 7px">📱</a>` : ''}
-          ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();deleteFee('${f.id}')" style="padding:3px 7px;color:var(--error)">🗑️</button>` : ''}
+          ${canEdit ? (f.status === 'pago'
+            ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();toggleFeePago('${f.id}','pendente')" style="padding:3px 7px" title="Reverter para pendente">↩️</button>`
+            : `<button class="btn btn-success btn-sm" onclick="event.stopPropagation();toggleFeePago('${f.id}','pago')" style="padding:3px 7px" title="Marcar como pago">✅</button>`) : ''}
+          ${canEdit ? `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteFee('${f.id}')" style="padding:3px 7px" title="Excluir mensalidade">🗑️</button>` : ''}
         </div>
       </div>`;
     }).join('');
@@ -2189,9 +2192,29 @@ function toggleFeeGroup(id, header) {
 
 async function deleteFee(feeId) {
   if (!confirm('Excluir esta mensalidade?')) return;
-  const { error } = await SB.from('monthly_fees').delete().eq('id', feeId);
+  const { error } = await _svcDelete('monthly_fees', 'id', feeId);
   if (error) { toast('Erro: ' + error.message, 'error'); return; }
   toast('Mensalidade excluída', 'success');
+  loadFees();
+}
+
+async function toggleFeePago(feeId, newStatus) {
+  const upd = newStatus === 'pago'
+    ? { status: 'pago', paid_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+    : { status: 'pendente', paid_at: null, updated_at: new Date().toISOString() };
+  const { error } = await SB.from('monthly_fees').update(upd).eq('id', feeId);
+  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  // Lançar no caixa ao marcar pago
+  if (newStatus === 'pago') {
+    const { data: feeData } = await SB.from('monthly_fees').select('amount, month, year, athletes(name, nickname)').eq('id', feeId).limit(1);
+    if (feeData && feeData[0]) {
+      const f = feeData[0];
+      const monthNames = ['','Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+      const nome = f.athletes?.nickname || f.athletes?.name || 'Atleta';
+      await SB.from('caixa_lancamentos').insert({ data: new Date().toISOString().split('T')[0], historico: `Mensalidade ${monthNames[f.month]||f.month}/${f.year} — ${nome}`, tipo: 'entrada', valor: Number(f.amount), origem: 'mensalidade', origem_id: 'fee_' + feeId });
+    }
+  }
+  toast(newStatus === 'pago' ? 'Marcado como pago ✅' : 'Revertido para pendente', 'success');
   loadFees();
 }
 
