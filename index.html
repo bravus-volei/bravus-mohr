@@ -1410,10 +1410,14 @@ async function openRsvpList(trainingId, trainingTitle) {
     document.getElementById('rsvp-content').innerHTML = '<div style="color:var(--text2);font-size:13px;padding:12px 0">Ninguém confirmou ainda.</div>';
     return;
   }
-  // Buscar profiles e todos os athletes de uma vez (time pequeno)
+  // Buscar profiles via service key (RLS bloqueia leitura de outros profiles)
   const profileIds = list.map(r => r.profile_id);
-  const { data: profs } = await SB.from('profiles').select('id, name, email, athlete_id, auth_user_id').in('id', profileIds);
-  const { data: allAths } = await SB.from('athletes').select('id, email, nickname, name');
+  const profUrl = _SB_URL + '/rest/v1/profiles?select=id,name,email,athlete_id&id=in.(' + profileIds.map(id => encodeURIComponent(id)).join(',') + ')';
+  const profRes = await fetch(profUrl, { headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY } });
+  const profs = profRes.ok ? await profRes.json() : [];
+  // Buscar todos athletes via service key
+  const athRes = await fetch(_SB_URL + '/rest/v1/athletes?select=id,email,nickname,name', { headers: { 'apikey': _SB_SVC_KEY, 'Authorization': 'Bearer ' + _SB_SVC_KEY } });
+  const allAths = athRes.ok ? await athRes.json() : [];
   const athById = {}; const athByEmail = {};
   (allAths || []).forEach(a => {
     athById[a.id] = a.nickname || a.name;
