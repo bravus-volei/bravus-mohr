@@ -902,7 +902,6 @@ h1,h2,h3{font-weight:700}
     <div class="form-group">
       <label>Função</label>
       <select id="usr-role">
-        <option value="atleta">Atleta</option>
         <option value="tesoureiro">Tesoureiro</option>
         <option value="tecnico">Técnico</option>
         <option value="admin">Administrador</option>
@@ -931,7 +930,6 @@ h1,h2,h3{font-weight:700}
     <div class="form-group">
       <label>Função</label>
       <select id="edit-usr-role">
-        <option value="atleta">Atleta</option>
         <option value="tesoureiro">Tesoureiro</option>
         <option value="tecnico">Técnico</option>
         <option value="admin">Administrador</option>
@@ -2628,7 +2626,7 @@ function showUsers() {
 }
 
 async function loadUserList() {
-  const { data } = await SB.from('profiles').select('*').order('name');
+  const { data } = await SB.from('profiles').select('*').neq('role','atleta').order('name');
   const el = document.getElementById('user-list');
   if (!el) return;
   if (!data || data.length === 0) {
@@ -2710,7 +2708,7 @@ async function deleteUser(profileId) {
 
 function openUserModal() {
   ['usr-name','usr-email','usr-password','usr-id'].forEach(i => { const el=document.getElementById(i); if(el) el.value=''; });
-  document.getElementById('usr-role').value = 'atleta';
+  document.getElementById('usr-role').value = 'tesoureiro';
   document.getElementById('user-modal-title').textContent = 'Novo Usuário';
   openModal('modal-user');
 }
