@@ -546,10 +546,8 @@ h1,h2,h3{font-weight:700}
       <button class="tab" onclick="showFeesTab('extras')" id="ftab-extras">Cobranças</button>
     </div>
     <div id="fees-mensalidades">
-      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-        <select id="fee-month-sel" onchange="loadFees()" style="flex:1;min-width:120px"></select>
-        <select id="fee-year-sel" onchange="loadFees()" style="flex:1;min-width:80px"></select>
-        <button class="btn btn-primary btn-sm" id="btn-gen-fees" onclick="generateFees()">Gerar</button>
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-primary btn-sm" id="btn-gen-fees" onclick="openGenerateFeesModal()" style="display:none">+ Gerar mês</button>
       </div>
       <div id="fee-list"></div>
     </div>
@@ -774,6 +772,27 @@ h1,h2,h3{font-weight:700}
     <div class="modal-title" id="fee-detail-title">Mensalidade</div>
     <div id="fee-detail-content"></div>
     <div class="modal-actions" id="fee-detail-actions"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-gen-fee">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">Gerar Mensalidades</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="form-group">
+        <label>Mês</label>
+        <select id="fee-month-sel"></select>
+      </div>
+      <div class="form-group">
+        <label>Ano</label>
+        <select id="fee-year-sel"></select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeModal('modal-gen-fee')">Cancelar</button>
+      <button class="btn btn-primary" style="flex:2" onclick="generateFees()">Gerar</button>
+    </div>
   </div>
 </div>
 
@@ -1925,79 +1944,121 @@ function showFeesTab(tab) {
   if (btnAdd) btnAdd.style.display = canAdd ? '' : 'none';
 }
 
-async function loadFees() {
+function openGenerateFeesModal() {
   const now = new Date();
   const monthSel = document.getElementById('fee-month-sel');
   const yearSel = document.getElementById('fee-year-sel');
+  const months = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  monthSel.innerHTML = months.map((m,i) => `<option value="${i+1}" ${i+1===now.getMonth()+1?'selected':''}>${m}</option>`).join('');
+  const y = now.getFullYear();
+  yearSel.innerHTML = [y-1,y,y+1].map(yr => `<option value="${yr}" ${yr===y?'selected':''}>${yr}</option>`).join('');
+  openModal('modal-gen-fee');
+}
 
-  // Build month options
-  if (!monthSel.innerHTML) {
-    const months = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-    monthSel.innerHTML = months.map((m,i) => `<option value="${i+1}" ${i+1===now.getMonth()+1?'selected':''}>${m}</option>`).join('');
-  }
-  if (!yearSel.innerHTML) {
-    const y = now.getFullYear();
-    yearSel.innerHTML = [y-1,y,y+1].map(yr => `<option value="${yr}" ${yr===y?'selected':''}>${yr}</option>`).join('');
-  }
-
-  const month = parseInt(monthSel.value);
-  const year = parseInt(yearSel.value);
+async function loadFees() {
   const { data } = await SB.from('monthly_fees')
     .select('*, athletes(name, nickname, phone, monthly_fee_value)')
-    .eq('month', month).eq('year', year)
-    .order('created_at');
+    .order('year', { ascending: false });
   allFees = data || [];
   renderFeeList(allFees);
-
   const role = currentProfile?.role;
   const canGenerate = role === 'admin' || role === 'tesoureiro';
   document.getElementById('btn-gen-fees').style.display = canGenerate ? '' : 'none';
 }
 
+function _feeBadge(status) {
+  if (status === 'pago') return `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(34,197,94,0.18);color:#22c55e;white-space:nowrap">PAGO</span>`;
+  if (status === 'atrasado') return `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(239,68,68,0.18);color:#ef4444;white-space:nowrap">ATRASADO</span>`;
+  return `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(234,179,8,0.18);color:#eab308;white-space:nowrap">PENDENTE</span>`;
+}
+
 function renderFeeList(list) {
   const el = document.getElementById('fee-list');
   if (!list || list.length === 0) {
-    el.innerHTML = `<div class="empty-state"><p>Nenhuma mensalidade gerada.<br>Clique em "Gerar" para criar.</p></div>`;
+    el.innerHTML = `<div class="empty-state"><p>Nenhuma mensalidade gerada.<br>Clique em "+ Gerar mês" para criar.</p></div>`;
     return;
   }
-  const paid = list.filter(f => f.status === 'pago').length;
-  el.innerHTML = `
-    <div style="display:flex;justify-content:space-between;margin-bottom:12px;font-size:13px;color:var(--text2)">
-      <span>${paid}/${list.length} pagos</span>
-      <span>R$ ${list.filter(f=>f.status==='pago').reduce((s,f)=>s+f.amount,0).toFixed(2)} recebido</span>
-    </div>
-    ${list.map(f => {
+
+  // Agrupar por ano+mês, ordenado do mais recente
+  const groups = {};
+  list.forEach(f => {
+    const key = `${f.year}-${String(f.month).padStart(2,'0')}`;
+    if (!groups[key]) groups[key] = { year: f.year, month: f.month, items: [] };
+    groups[key].items.push(f);
+  });
+  const sortedKeys = Object.keys(groups).sort((a,b) => b.localeCompare(a));
+  const monthNames = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const role = currentProfile?.role;
+  const canEdit = role === 'admin' || role === 'tesoureiro';
+
+  el.innerHTML = sortedKeys.map((key, gi) => {
+    const g = groups[key];
+    const paid = g.items.filter(f => f.status === 'pago').length;
+    const pend = g.items.length - paid;
+    const totalRec = g.items.filter(f=>f.status==='pago').reduce((s,f)=>s+Number(f.amount),0);
+    const isOpen = gi === 0; // primeiro grupo aberto por padrão
+
+    const rows = g.items.map(f => {
       const ath = f.athletes;
       const phone = ath?.phone ? ath.phone.replace(/\D/g,'') : null;
       const feeAmt = f.amount || ath?.monthly_fee_value || settings.fee_amount || 50;
-      const treasPhone = settings.treasurer_phone ? settings.treasurer_phone.replace(/\D/g,'') : null;
       const pixKey = settings.pix_key || '';
       const pixLine = pixKey ? `\n\n💰 Chave PIX: ${pixKey}` : '';
       const wamsg = encodeURIComponent(`Olá ${ath?.nickname||ath?.name}! 🏐\n\nSua mensalidade ${f.month}/${f.year} de R$ ${Number(feeAmt).toFixed(2)} está aguardando pagamento.${pixLine}\n\n_Tesoureiro_\n_Bravus Vôlei_`);
-      const waTarget = phone || treasPhone;
-      const waLink = waTarget ? `https://wa.me/55${waTarget}?text=${wamsg}` : null;
-      const statusBadge = f.status === 'pago'
-        ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(34,197,94,0.18);color:#22c55e;white-space:nowrap">PAGO</span>`
-        : f.status === 'atrasado'
-        ? `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(239,68,68,0.18);color:#ef4444;white-space:nowrap">ATRASADO</span>`
-        : `<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(234,179,8,0.18);color:#eab308;white-space:nowrap">PENDENTE</span>`;
-      return `<div class="fee-item" onclick="openFeeDetail('${f.id}')">
+      const waLink = phone ? `https://wa.me/55${phone}?text=${wamsg}` : null;
+      return `<div class="fee-item" style="cursor:pointer" onclick="openFeeDetail('${f.id}')">
         <div class="fee-info">
           <div class="fee-name">${ath?.nickname||ath?.name||'Atleta'}</div>
-          <div class="fee-meta">vence dia ${settings.due_day||10}</div>
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          ${statusBadge}
+        <div style="display:flex;align-items:center;gap:6px">
+          ${_feeBadge(f.status)}
           <span class="fee-amount">R$ ${Number(f.amount).toFixed(2)}</span>
-          ${waLink && f.status !== 'pago' ? `<a href="${waLink}" target="_blank" class="btn btn-success btn-sm" onclick="event.stopPropagation()">📱</a>` : ''}
+          ${waLink && f.status !== 'pago' ? `<a href="${waLink}" target="_blank" class="btn btn-success btn-sm" onclick="event.stopPropagation()" style="padding:3px 7px">📱</a>` : ''}
+          ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();deleteFee('${f.id}')" style="padding:3px 7px;color:var(--error)">🗑️</button>` : ''}
         </div>
       </div>`;
-    }).join('')}`;
+    }).join('');
+
+    return `<div style="margin-bottom:8px;border-radius:12px;overflow:hidden;border:1px solid var(--bg3)">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg2);cursor:pointer" onclick="toggleFeeGroup('fg-${key}',this)">
+        <div>
+          <span style="font-weight:700;font-size:14px">Mensalidades ${monthNames[g.month]} ${g.year}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:rgba(234,179,8,0.18);color:#eab308">${pend} pend.</span>
+          <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:rgba(34,197,94,0.18);color:#22c55e">${paid} rec.</span>
+          <span style="font-size:11px;color:var(--text2)">▼</span>
+        </div>
+      </div>
+      <div id="fg-${key}" style="display:${isOpen?'block':'none'};padding:8px">
+        <div style="font-size:12px;color:var(--text2);margin-bottom:8px;padding:0 4px">R$ ${totalRec.toFixed(2)} recebido de R$ ${g.items.reduce((s,f)=>s+Number(f.amount),0).toFixed(2)}</div>
+        ${rows}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleFeeGroup(id, header) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const isOpen = el.style.display !== 'none';
+  el.style.display = isOpen ? 'none' : 'block';
+  const arrow = header.querySelector('span:last-child');
+  if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
+}
+
+async function deleteFee(feeId) {
+  if (!confirm('Excluir esta mensalidade?')) return;
+  const { error } = await SB.from('monthly_fees').delete().eq('id', feeId);
+  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  toast('Mensalidade excluída', 'success');
+  loadFees();
 }
 
 async function generateFees() {
   const month = parseInt(document.getElementById('fee-month-sel').value);
   const year = parseInt(document.getElementById('fee-year-sel').value);
+  closeModal('modal-gen-fee');
   if (!confirm(`Gerar mensalidades de ${month}/${year} para todos os atletas ativos?`)) return;
 
   const { data: athData } = await SB.from('athletes').select('id, monthly_fee_value').eq('status','ativo');
@@ -2075,29 +2136,59 @@ async function markFeePending(feeId) {
 <script>
 // ===================== EXTRA CHARGES =====================
 async function loadExtraCharges() {
-  const { data } = await SB.from('extra_charges').select('*, extra_charge_athletes(id, status, athlete_id)').order('due_date');
+  const { data } = await SB.from('extra_charges')
+    .select('*, extra_charge_athletes(id, status, paid_at, athlete_id, athletes(name, nickname, phone))')
+    .order('due_date', { ascending: false });
   const el = document.getElementById('extra-charge-list');
   if (!data || data.length === 0) {
     el.innerHTML = `<div class="empty-state"><p>Nenhuma cobrança extra cadastrada.</p></div>`;
     return;
   }
-  el.innerHTML = data.map(c => {
-    const total = c.extra_charge_athletes?.length || 0;
-    const paid = c.extra_charge_athletes?.filter(a => a.status === 'pago').length || 0;
-    const pct = total > 0 ? Math.round(paid/total*100) : 0;
+  const role = currentProfile?.role;
+  const canEdit = role === 'admin' || role === 'tesoureiro';
+
+  el.innerHTML = data.map((c, ci) => {
+    const ecas = c.extra_charge_athletes || [];
+    const paid = ecas.filter(a => a.status === 'pago').length;
+    const pend = ecas.length - paid;
     const dueDate = c.due_date ? new Date(c.due_date + 'T12:00:00').toLocaleDateString('pt-BR') : '-';
-    return `<div class="charge-item" onclick="openChargeDetail('${c.id}')">
-      <div class="charge-header">
-        <div>
-          <div class="charge-title">${c.title}</div>
-          <div class="charge-meta">Vence: ${dueDate} ${c.recurrent?'· Recorrente':''}${c.installments>1?` · ${c.installments}x`:''}</div>
+    const isOpen = ci === 0;
+
+    const rows = ecas.map(eca => {
+      const ath = eca.athletes;
+      const phone = ath?.phone ? ath.phone.replace(/\D/g,'') : null;
+      const pixKey = settings.pix_key || '';
+      const pixLine = pixKey ? `\n\n💰 Chave PIX: ${pixKey}` : '';
+      const wamsg = encodeURIComponent(`Olá ${ath?.nickname||ath?.name}! 🏐\n\n${c.title} — R$ ${Number(c.amount).toFixed(2)} aguardando pagamento.${pixLine}\n\n_Tesoureiro_\n_Bravus Vôlei_`);
+      const waLink = phone ? `https://wa.me/55${phone}?text=${wamsg}` : null;
+      return `<div class="fee-item">
+        <div class="fee-info"><div class="fee-name">${ath?.nickname||ath?.name||'Atleta'}</div></div>
+        <div style="display:flex;align-items:center;gap:6px">
+          ${_feeBadge(eca.status)}
+          <span class="fee-amount">R$ ${Number(c.amount).toFixed(2)}</span>
+          ${waLink && eca.status!=='pago' ? `<a href="${waLink}" target="_blank" class="btn btn-success btn-sm" style="padding:3px 7px">📱</a>` : ''}
+          ${canEdit && eca.status!=='pago' ? `<button class="btn btn-secondary btn-sm" onclick="markChargeAthlPaid('${eca.id}','${c.id}')" style="padding:3px 7px">✅</button>` : ''}
+          ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="deleteChargeAthlete('${eca.id}','${c.id}')" style="padding:3px 7px;color:var(--error)">🗑️</button>` : ''}
         </div>
-        <div class="charge-amount">R$ ${Number(c.amount).toFixed(2)}</div>
+      </div>`;
+    }).join('');
+
+    return `<div style="margin-bottom:8px;border-radius:12px;overflow:hidden;border:1px solid var(--bg3)">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg2);cursor:pointer" onclick="toggleFeeGroup('cg-${c.id}',this)">
+        <div style="flex:1">
+          <div style="font-weight:700;font-size:14px">${c.title}</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px">Vence: ${dueDate} · R$ ${Number(c.amount).toFixed(2)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:rgba(234,179,8,0.18);color:#eab308">${pend} pend.</span>
+          <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:rgba(34,197,94,0.18);color:#22c55e">${paid} rec.</span>
+          ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();deleteCharge('${c.id}')" style="padding:3px 7px;color:var(--error)">🗑️</button>` : ''}
+          <span style="font-size:11px;color:var(--text2)">▼</span>
+        </div>
       </div>
-      ${total > 0 ? `<div class="charge-progress">
-        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2)"><span>${paid}/${total} pagos</span><span>${pct}%</span></div>
-        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-      </div>` : ''}
+      <div id="cg-${c.id}" style="display:${isOpen?'block':'none'};padding:8px">
+        ${rows || '<div style="font-size:13px;color:var(--text2);padding:8px">Nenhum atleta vinculado.</div>'}
+      </div>
     </div>`;
   }).join('');
 }
@@ -2189,14 +2280,34 @@ async function saveCharge() {
 
 async function linkAthletesToCharges(charges) {
   const { data: athData } = await SB.from('athletes').select('id').eq('status','ativo');
-  if (!athData || !charges) return;
-  const rows = [];
+  if (!athData || !charges || charges.length === 0) return;
   for (const ch of charges) {
-    for (const a of athData) {
-      rows.push({ extra_charge_id: ch.id, athlete_id: a.id, status: 'pendente', created_at: new Date().toISOString() });
-    }
+    // Buscar atletas já vinculados a esta cobrança
+    const { data: existing } = await SB.from('extra_charge_athletes').select('athlete_id').eq('extra_charge_id', ch.id);
+    const existingIds = new Set((existing || []).map(x => x.athlete_id));
+    const rows = athData
+      .filter(a => !existingIds.has(a.id))
+      .map(a => ({ extra_charge_id: ch.id, athlete_id: a.id, status: 'pendente', created_at: new Date().toISOString() }));
+    if (rows.length > 0) await SB.from('extra_charge_athletes').insert(rows);
   }
-  if (rows.length > 0) await SB.from('extra_charge_athletes').insert(rows);
+}
+
+async function deleteCharge(chargeId) {
+  if (!confirm('Excluir esta cobrança e todos os registros de atletas vinculados?')) return;
+  // Excluir vínculos primeiro
+  await SB.from('extra_charge_athletes').delete().eq('extra_charge_id', chargeId);
+  const { error } = await SB.from('extra_charges').delete().eq('id', chargeId);
+  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  toast('Cobrança excluída', 'success');
+  loadExtraCharges();
+}
+
+async function deleteChargeAthlete(ecaId, chargeId) {
+  if (!confirm('Remover este atleta desta cobrança?')) return;
+  const { error } = await SB.from('extra_charge_athletes').delete().eq('id', ecaId);
+  if (error) { toast('Erro: ' + error.message, 'error'); return; }
+  toast('Atleta removido', 'success');
+  loadExtraCharges();
 }
 
 async function openChargeDetail(chargeId) {
@@ -2235,9 +2346,8 @@ async function openChargeDetail(chargeId) {
 async function markChargeAthlPaid(ecaId, chargeId) {
   const { error } = await SB.from('extra_charge_athletes').update({ status:'pago', paid_at: new Date().toISOString() }).eq('id', ecaId);
   if (error) { toast('Erro: ' + error.message, 'error'); return; }
-  toast('Pago!', 'success');
-  closeModal('modal-fee-detail');
-  openChargeDetail(chargeId);
+  toast('Pago! ✅', 'success');
+  loadExtraCharges();
 }
 
 // ===================== ANNOUNCEMENTS PAGE =====================
