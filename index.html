@@ -2605,31 +2605,50 @@ function calNext() {
 }
 
 // ===================== USERS =====================
-async function showUsers() {
-  const { data } = await SB.from('profiles').select('*').order('name');
-  document.getElementById('fee-detail-title').textContent = 'Usuários';
+function showUsers() {
+  let pg = document.getElementById('page-users');
+  if (!pg) {
+    pg = document.createElement('div');
+    pg.id = 'page-users';
+    pg.className = 'page';
+    pg.innerHTML = `
+      <div class="sec-header">
+        <button class="btn btn-secondary btn-sm" onclick="navigateTo('more')" style="padding:6px 10px">← Voltar</button>
+        <span class="sec-title">Usuários</span>
+        <button class="btn btn-primary btn-sm" id="btn-add-user" onclick="openUserModal()">+ Novo</button>
+      </div>
+      <div id="user-list"></div>`;
+    document.getElementById('app').insertBefore(pg, document.querySelector('.bottom-nav'));
+  }
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  pg.classList.add('active');
   const role = currentProfile?.role;
-  const canAdd = role === 'admin';
-  document.getElementById('fee-detail-content').innerHTML = `
-    ${canAdd ? `<button class="btn btn-primary btn-block" style="margin-bottom:12px" onclick="openUserModal()">+ Novo Usuário</button>` : ''}
-    ${(data||[]).map(u => `<div class="user-item" style="cursor:pointer" onclick="openEditUserModal('${u.id}')">
+  document.getElementById('btn-add-user').style.display = role === 'admin' ? '' : 'none';
+  loadUserList();
+}
+
+async function loadUserList() {
+  const { data } = await SB.from('profiles').select('*').order('name');
+  const el = document.getElementById('user-list');
+  if (!el) return;
+  if (!data || data.length === 0) {
+    el.innerHTML = `<div class="empty-state"><p>Nenhum usuário encontrado.</p></div>`;
+    return;
+  }
+  el.innerHTML = (data||[]).map(u => `
+    <div class="user-item" style="cursor:pointer" onclick="openEditUserModal('${u.id}')">
       <div class="user-info">
         <div class="user-name">${u.name} <span class="role-badge role-${u.role}">${roleLabel(u.role)}</span></div>
         <div class="user-email">${u.email||''}</div>
       </div>
       <span style="font-size:18px;color:var(--text2)">›</span>
-    </div>`).join('')}`;
-  document.getElementById('fee-detail-actions').innerHTML = `<button class="btn btn-secondary btn-block" onclick="closeModal('modal-fee-detail')">Fechar</button>`;
-  openModal('modal-fee-detail');
+    </div>`).join('');
 }
 
 async function openEditUserModal(profileId) {
   const { data: profs } = await SB.from('profiles').select('*').eq('id', profileId).limit(1);
   const u = profs && profs[0];
   if (!u) return;
-
-  // Fechar modal de lista e abrir modal de edição
-  closeModal('modal-fee-detail');
 
   document.getElementById('edit-usr-id').value = u.id;
   document.getElementById('edit-usr-user-id').value = u.user_id || '';
