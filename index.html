@@ -1066,6 +1066,21 @@ let trainingsFilter = 'upcoming';
 
 // ===================== INIT =====================
 window.addEventListener('load', async () => {
+  // Detectar link de recuperação de senha (hash #access_token=...&type=recovery)
+  const hash = window.location.hash.substring(1);
+  if (hash) {
+    const params = Object.fromEntries(hash.split('&').map(p => p.split('=')));
+    if (params.type === 'recovery' && params.access_token) {
+      _userToken = params.access_token;
+      try {
+        const payload = JSON.parse(atob(params.access_token.split('.')[1]));
+        currentUser = { id: payload.sub, email: payload.email };
+      } catch(e) {}
+      window.history.replaceState(null, '', window.location.pathname);
+      showResetScreen();
+      return;
+    }
+  }
   const { data: { session } } = await SB.auth.getSession();
   if (session) {
     currentUser = session.user;
