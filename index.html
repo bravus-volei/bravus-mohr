@@ -1666,8 +1666,8 @@ async function saveAthlete() {
   // Se admin preencheu nova senha para atleta existente, resetar via admin API
   const newPass = document.getElementById('ath-password')?.value;
   if (id && newPass && newPass.length >= 6) {
-    const { data: profData } = await SB.from('profiles').select('user_id').eq('email', email).limit(1);
-    const userId = profData && profData[0]?.user_id;
+    const { data: profData } = await SB.from('profiles').select('auth_user_id').eq('email', email).limit(1);
+    const userId = profData && profData[0]?.auth_user_id;
     if (userId) {
       const r = await fetch(`${_SB_URL}/auth/v1/admin/users/${userId}`, {
         method: 'PUT',
@@ -3080,7 +3080,7 @@ async function openEditUserModal(profileId) {
   if (!u) return;
 
   document.getElementById('edit-usr-id').value = u.id;
-  document.getElementById('edit-usr-user-id').value = u.user_id || '';
+  document.getElementById('edit-usr-user-id').value = u.auth_user_id || '';
   document.getElementById('edit-usr-name').value = u.name || '';
   document.getElementById('edit-usr-email').value = u.email || '';
   document.getElementById('edit-usr-role').value = u.role || 'atleta';
@@ -3121,8 +3121,8 @@ async function saveEditUser() {
 
 async function deleteUser(profileId) {
   if (!confirm('Excluir este usuário permanentemente?')) return;
-  const { data: profs } = await SB.from('profiles').select('user_id').eq('id', profileId).limit(1);
-  const userId = profs && profs[0]?.user_id;
+  const { data: profs } = await SB.from('profiles').select('auth_user_id').eq('id', profileId).limit(1);
+  const userId = profs && profs[0]?.auth_user_id;
   // Excluir profile
   await _svcDelete('profiles', 'id', profileId);
   // Excluir auth user se existir
@@ -3320,9 +3320,9 @@ async function resetAthletePasswords() {
   if (!confirm('Criar/redefinir senha "Atleta" para todos os atletas e técnicos?\n\nAdmins e tesoureiros NÃO serão afetados.')) return;
 
   // Buscar e-mails protegidos (admin/tesoureiro)
-  const { data: protectedProfs } = await SB.from('profiles').select('user_id, role, email').in('role', ['admin', 'tesoureiro']);
+  const { data: protectedProfs } = await SB.from('profiles').select('auth_user_id, role, email').in('role', ['admin', 'tesoureiro']);
   const protectedEmails = new Set((protectedProfs || []).map(p => p.email).filter(Boolean));
-  const protectedIds = new Set((protectedProfs || []).map(p => p.user_id).filter(Boolean));
+  const protectedIds = new Set((protectedProfs || []).map(p => p.auth_user_id).filter(Boolean));
 
   // Buscar atletas com e-mail cadastrado
   const { data: athData } = await SB.from('athletes').select('email, name').eq('status', 'ativo');
