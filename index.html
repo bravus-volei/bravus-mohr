@@ -2596,6 +2596,13 @@ async function linkAthletesToCharges(charges, specificAthleteIds = null) {
 
 async function deleteCharge(chargeId) {
   if (!confirm('Excluir esta cobrança e todos os registros de atletas vinculados?')) return;
+  // 1. Buscar IDs dos vínculos antes de deletar para limpar o caixa
+  const { data: ecas } = await SB.from('extra_charge_athletes').select('id').eq('extra_charge_id', chargeId);
+  // 2. Remover lançamentos do caixa de cada vínculo que foi pago
+  if (ecas && ecas.length > 0) {
+    await Promise.all(ecas.map(e => _removeCaixaByOrigem('eca_' + e.id)));
+  }
+  // 3. Deletar vínculos e a cobrança
   const r1 = await _svcDelete('extra_charge_athletes', 'extra_charge_id', chargeId);
   if (r1.error) { toast('Erro ao excluir vínculos: ' + r1.error.message, 'error'); return; }
   const r2 = await _svcDelete('extra_charges', 'id', chargeId);
@@ -2606,6 +2613,8 @@ async function deleteCharge(chargeId) {
 
 async function deleteChargeAthlete(ecaId) {
   if (!confirm('Remover este atleta desta cobrança?')) return;
+  // Remove lançamento do caixa caso esteja como pago
+  await _removeCaixaByOrigem('eca_' + ecaId);
   const { error } = await _svcDelete('extra_charge_athletes', 'id', ecaId);
   if (error) { toast('Erro: ' + error.message, 'error'); return; }
   toast('Atleta removido desta cobrança', 'success');
