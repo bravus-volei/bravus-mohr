@@ -3346,6 +3346,8 @@ async function gerarRelatorio() {
   const btnGerar = document.querySelector('#settings-relatorio .btn-primary');
   if (btnGerar) { btnGerar.innerHTML = '<span class="spinner"></span> Carregando...'; btnGerar.disabled = true; }
 
+  const fmtBRL = v => v != null ? 'R$\u00a0' + Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
+
   try {
     const hoje = new Date();
     const anoAtual  = hoje.getFullYear();
@@ -3360,37 +3362,32 @@ async function gerarRelatorio() {
     const { data: athletes } = await SB.from('athletes').select('id,name,nickname').eq('status','ativo').order('name', { ascending: true });
     if (!athletes || athletes.length === 0) { toast('Nenhum atleta ativo', 'error'); return; }
 
-    const athIds = athletes.map(a => a.id);
-
-    // Buscar mensalidades
+    // Buscar mensalidades com amount
     let feesAtual = [], feesAnt = [];
     if (incFeeAtual) {
-      const { data } = await SB.from('monthly_fees').select('athlete_id,status,paid_at').eq('year', anoAtual).eq('month', mesAtual);
+      const { data } = await SB.from('monthly_fees').select('athlete_id,status,amount').eq('year', anoAtual).eq('month', mesAtual);
       feesAtual = data || [];
     }
     if (incFeeAnt) {
-      const { data } = await SB.from('monthly_fees').select('athlete_id,status,paid_at').eq('year', anoAnt).eq('month', mesAnt);
+      const { data } = await SB.from('monthly_fees').select('athlete_id,status,amount').eq('year', anoAnt).eq('month', mesAnt);
       feesAnt = data || [];
     }
 
-    // Mapas rápidos: athlete_id → status
+    // Mapas rápidos: athlete_id → { status, amount }
     const mapFeeAtual = {};
-    feesAtual.forEach(f => { mapFeeAtual[f.athlete_id] = f.status; });
+    feesAtual.forEach(f => { mapFeeAtual[f.athlete_id] = { status: f.status, amount: f.amount }; });
     const mapFeeAnt = {};
-    feesAnt.forEach(f => { mapFeeAnt[f.athlete_id] = f.status; });
+    feesAnt.forEach(f => { mapFeeAnt[f.athlete_id] = { status: f.status, amount: f.amount }; });
 
-    // Buscar cobranças extras relevantes
-    let extraCharges = []; // { id, title, due_date }
+    // Buscar cobranças extras relevantes com amount
+    let extraCharges = []; // { id, title, due_date, amount }
     if (incVencidas || incProximas) {
-      // Cobranças vencidas com pendência
-      let q = SB.from('extra_charges').select('id,title,due_date');
+      let q = SB.from('extra_charges').select('id,title,due_date,amount');
       if (incVencidas && incProximas) {
-        // vencidas pendentes OU proximas 30 dias — busca tudo e filtra depois
         const { data } = await q.order('due_date', { ascending: true });
         const todos = data || [];
         const vencidas = incVencidas ? todos.filter(c => c.due_date < hojeStr) : [];
         const proximas = incProximas ? todos.filter(c => c.due_date >= hojeStr && c.due_date <= hoje30Str) : [];
-        // Para vencidas, só incluir se tiver pelo menos 1 atleta pendente (filtramos depois)
         extraCharges = [...vencidas, ...proximas].filter((c,i,arr) => arr.findIndex(x=>x.id===c.id)===i);
       } else if (incVencidas) {
         const { data } = await q.lt('due_date', hojeStr).order('due_date', { ascending: true });
@@ -3402,14 +3399,18 @@ async function gerarRelatorio() {
     }
 
     // Buscar status por atleta de cada cobrança extra
-    // mapEca[charge_id][athlete_id] = 'pago' | 'pendente'
+    // CORRIGIDO: coluna é extra_charge_id, não charge_id
+    // mapEca[extra_charge_id][athlete_id] = { status, amount }
     const mapEca = {};
     if (extraCharges.length > 0) {
       const chargeIds = extraCharges.map(c => c.id);
-      const { data: ecaData } = await SB.from('extra_charge_athletes').select('charge_id,athlete_id,status').in('charge_id', chargeIds);
+      const { data: ecaData } = await SB.from('extra_charge_athletes').select('extra_charge_id,athlete_id,status').in('extra_charge_id', chargeIds);
+      // Mapa de amount por charge_id para usar nas células
+      const chargeAmountMap = {};
+      extraCharges.forEach(c => { chargeAmountMap[c.id] = c.amount; });
       (ecaData || []).forEach(e => {
-        if (!mapEca[e.charge_id]) mapEca[e.charge_id] = {};
-        mapEca[e.charge_id][e.athlete_id] = e.status;
+        if (!mapEca[e.extra_charge_id]) mapEca[e.extra_charge_id] = {};
+        mapEca[e.extra_charge_id][e.athlete_id] = { status: e.status, amount: chargeAmountMap[e.extra_charge_id] };
       });
     }
 
@@ -3418,9 +3419,8 @@ async function gerarRelatorio() {
     if (incVencidas) {
       chargesParaExibir = extraCharges.filter(c => {
         if (c.due_date >= hojeStr) return true; // é próxima, mantém sempre
-        // é vencida: só mantém se tiver pelo menos 1 atleta pendente
         const ecas = mapEca[c.id] || {};
-        return Object.values(ecas).some(s => s === 'pendente');
+        return Object.values(ecas).some(s => s.status === 'pendente');
       });
     }
 
@@ -3441,40 +3441,54 @@ async function gerarRelatorio() {
 
     const thStyle = `style="padding:8px 6px;text-align:center;font-size:11px;font-weight:700;color:var(--text2);border-bottom:2px solid var(--accent);white-space:nowrap;background:var(--bg2)"`;
     const thNameStyle = `style="padding:8px 6px;text-align:left;font-size:11px;font-weight:700;color:var(--text2);border-bottom:2px solid var(--accent);background:var(--bg2);position:sticky;left:0;z-index:2"`;
+    const thTotalStyle = `style="padding:8px 6px;text-align:center;font-size:11px;font-weight:700;color:var(--warn);border-bottom:2px solid var(--accent);white-space:nowrap;background:var(--bg2)"`;
 
     let theadCols = colunas.map(c => `<th ${thStyle}>${c.label.replace(/\n/g,'<br>')}</th>`).join('');
+    theadCols += `<th ${thTotalStyle}>Total Devido</th>`;
 
     let tbodyRows = athletes.map((ath, idx) => {
       const bgRow = idx % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
-      const tdStyle = `style="padding:8px 6px;text-align:center;font-size:13px;border-bottom:1px solid var(--bg3);background:${bgRow}"`;
+      const tdStyle = `style="padding:8px 6px;text-align:center;font-size:12px;border-bottom:1px solid var(--bg3);background:${bgRow}"`;
       const tdNameStyle = `style="padding:8px 6px;text-align:left;font-size:13px;font-weight:600;border-bottom:1px solid var(--bg3);background:${bgRow};position:sticky;left:0;z-index:1;max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"`;
 
+      let totalDevido = 0;
+
       const cells = colunas.map(col => {
-        let icon = '—', cls = '', title = '';
         if (col.tipo === 'fee') {
           const map = col.key === 'fee_atual' ? mapFeeAtual : mapFeeAnt;
-          const st  = map[ath.id];
-          if (!st)              { icon = '—';  cls = 'color:var(--text2)'; title = 'Não lançada'; }
-          else if (st==='pago') { icon = '✅'; cls = 'color:var(--success)'; title = 'Pago'; }
-          else                  { icon = '⚠️'; cls = 'color:var(--warn)'; title = 'Pendente'; }
+          const rec = map[ath.id];
+          if (!rec)                       return `<td ${tdStyle}><span style="color:var(--text2)" title="Não lançada">—</span></td>`;
+          if (rec.status === 'pago')       return `<td ${tdStyle}><span style="color:var(--success)" title="Pago">✅</span></td>`;
+          if (rec.status === 'isento')     return `<td ${tdStyle}><span style="color:var(--text2)" title="Isento">—</span></td>`;
+          // pendente / atrasado — exibe valor
+          const val = parseFloat(rec.amount) || 0;
+          totalDevido += val;
+          return `<td ${tdStyle}><span style="color:var(--warn);font-weight:600" title="Pendente">${fmtBRL(val)}</span></td>`;
         } else if (col.tipo === 'eca') {
           const ecas = mapEca[col.chargeId] || {};
-          const st   = ecas[ath.id];
-          if (!st)              { icon = '—';  cls = 'color:var(--text2)'; title = 'Não incluso'; }
-          else if (st==='pago') { icon = '✅'; cls = 'color:var(--success)'; title = 'Pago'; }
-          else                  { icon = '⚠️'; cls = 'color:var(--warn)'; title = 'Pendente'; }
+          const rec  = ecas[ath.id];
+          if (!rec || rec.status === 'nao_participa') return `<td ${tdStyle}><span style="color:var(--text2)" title="Não incluso">—</span></td>`;
+          if (rec.status === 'pago')                  return `<td ${tdStyle}><span style="color:var(--success)" title="Pago">✅</span></td>`;
+          // pendente — exibe valor
+          const val = parseFloat(rec.amount) || 0;
+          totalDevido += val;
+          return `<td ${tdStyle}><span style="color:var(--warn);font-weight:600" title="Pendente">${fmtBRL(val)}</span></td>`;
         }
-        return `<td ${tdStyle}><span style="${cls}" title="${title}">${icon}</span></td>`;
+        return `<td ${tdStyle}>—</td>`;
       }).join('');
 
+      // Célula de total
+      const tdTotalStyle = `style="padding:8px 6px;text-align:center;font-size:12px;font-weight:700;border-bottom:1px solid var(--bg3);background:${bgRow};color:${totalDevido > 0 ? 'var(--warn)' : 'var(--success)'}"`;
+      const totalCell = `<td ${tdTotalStyle}>${totalDevido > 0 ? fmtBRL(totalDevido) : '✅'}</td>`;
+
       const apelido = ath.nickname ? ` (${ath.nickname})` : '';
-      return `<tr><td ${tdNameStyle} title="${ath.name}${apelido}">${ath.name}</td>${cells}</tr>`;
+      return `<tr><td ${tdNameStyle} title="${ath.name}${apelido}">${ath.name}</td>${cells}${totalCell}</tr>`;
     }).join('');
 
     // Linha de legenda
     const legend = `<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text2);margin-top:10px;margin-bottom:4px">
-      <span><span style="color:var(--success)">✅</span> Pago</span>
-      <span><span style="color:var(--warn)">⚠️</span> Pendente</span>
+      <span><span style="color:var(--success)">✅</span> Pago / Sem débito</span>
+      <span><span style="color:var(--warn);font-weight:600">R$</span> Valor pendente</span>
       <span>— Não lançado / Não incluso</span>
     </div>`;
 
@@ -3524,13 +3538,17 @@ function imprimirRelatorio() {
       body { font-family: Arial, sans-serif; font-size: 12px; color: #111; background: #fff; padding: 20px; }
       h2 { font-size: 16px; margin-bottom: 4px; }
       .sub { font-size: 11px; color: #555; margin-bottom: 14px; }
-      table { width: 100%; border-collapse: collapse; font-size: 11px; }
-      th { background: #1e293b; color: #fff; padding: 7px 6px; text-align: center; white-space: nowrap; font-size: 10px; }
+      table { width: 100%; border-collapse: collapse; font-size: 10px; }
+      th { background: #1e293b; color: #fff; padding: 7px 5px; text-align: center; white-space: nowrap; font-size: 9px; }
       th:first-child { text-align: left; }
-      td { padding: 6px; border-bottom: 1px solid #e2e8f0; text-align: center; }
-      td:first-child { text-align: left; font-weight: 600; max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      th:last-child { color: #fbbf24; }
+      td { padding: 5px; border-bottom: 1px solid #e2e8f0; text-align: center; white-space: nowrap; }
+      td:first-child { text-align: left; font-weight: 600; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+      td:last-child { font-weight: 700; }
       tr:nth-child(even) td { background: #f8fafc; }
-      .legend { margin-top: 12px; font-size: 11px; color: #555; display: flex; gap: 20px; }
+      .pend { color: #d97706; font-weight: 600; }
+      .ok   { color: #16a34a; }
+      .legend { margin-top: 12px; font-size: 10px; color: #555; display: flex; gap: 20px; flex-wrap: wrap; }
       @media print {
         body { padding: 10px; }
         button { display: none; }
@@ -3541,8 +3559,8 @@ function imprimirRelatorio() {
     <div class="sub">Gerado em ${geradoEm}</div>
     ${tabela.outerHTML}
     <div class="legend">
-      <span>✅ Pago</span>
-      <span>⚠️ Pendente</span>
+      <span><span class="ok">✅</span> Pago / Sem débito</span>
+      <span><span class="pend">R$</span> Valor pendente</span>
       <span>— Não lançado / Não incluso</span>
     </div>
     <script>window.onload = function(){ window.print(); }<\/script>
