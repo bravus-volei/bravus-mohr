@@ -3229,8 +3229,8 @@ function showSettingsPage() {
           <div class="card-title" style="margin-bottom:4px">📊 Configurar Relatório</div>
           <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Escolha o que deseja exibir. Apenas colunas selecionadas aparecerão.</p>
 
-          <!-- Filtro de exibição -->
-          <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg3);border-radius:8px;cursor:pointer;margin-bottom:14px">
+          <!-- Filtro atletas -->
+          <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg3);border-radius:8px;cursor:pointer;margin-bottom:16px">
             <input type="checkbox" id="rel-apenas-devedores" checked style="width:18px;height:18px;accent-color:var(--accent)">
             <div>
               <div style="font-size:14px;font-weight:600">Mostrar apenas atletas com débito</div>
@@ -3238,12 +3238,26 @@ function showSettingsPage() {
             </div>
           </label>
 
-          <!-- Mensalidades dinâmicas -->
-          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Mensalidades</div>
+          <!-- Mensalidades -->
+          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Mensalidades</div>
+          <!-- Atalhos rápidos -->
+          <div style="display:flex;gap:8px;margin-bottom:10px">
+            <button class="btn btn-secondary" style="font-size:12px;padding:5px 10px" onclick="relToggleFees(true)">Todas</button>
+            <button class="btn btn-secondary" style="font-size:12px;padding:5px 10px" onclick="relToggleFees(false)">Nenhuma</button>
+            <button class="btn btn-secondary" style="font-size:12px;padding:5px 10px" onclick="relSomentePendentes()">Só com pendente</button>
+          </div>
           <div id="rel-fees-list"><div style="font-size:13px;color:var(--text2);padding:8px 0">Carregando...</div></div>
 
-          <!-- Cobranças dinâmicas -->
-          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-top:16px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Cobranças Extras</div>
+          <!-- Cobranças Extras -->
+          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-top:18px;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Cobranças Extras</div>
+          <!-- Dias à frente configurável -->
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+            <span style="font-size:13px;color:var(--text2)">Mostrar a vencer nos próximos</span>
+            <input type="number" id="rel-dias-frente" value="15" min="1" max="365"
+              style="width:60px;padding:4px 8px;border-radius:6px;border:1px solid var(--bg3);background:var(--bg2);color:var(--text);font-size:13px;text-align:center">
+            <span style="font-size:13px;color:var(--text2)">dias</span>
+            <button class="btn btn-secondary" style="font-size:12px;padding:5px 10px" onclick="recarregarCobranças()">Atualizar</button>
+          </div>
           <div id="rel-charges-list"><div style="font-size:13px;color:var(--text2);padding:8px 0">Carregando...</div></div>
 
           <div style="display:flex;gap:8px;margin-top:18px">
@@ -3332,6 +3346,9 @@ function renderPositions() {
 
 // ===================== RELATÓRIO FINANCEIRO =====================
 
+// Cache interno para status de pendência por mês
+let _relFeesPendencia = {}; // `${year}-${month}` → bool (tem pendente?)
+
 async function carregarOpcoesRelatorio() {
   const feesList    = document.getElementById('rel-fees-list');
   const chargesList = document.getElementById('rel-charges-list');
@@ -3344,83 +3361,149 @@ async function carregarOpcoesRelatorio() {
   const hoje = new Date();
 
   try {
-    // Buscar meses distintos com mensalidades lançadas (últimos 6 meses)
-    const mesesOpts = [];
-    for (let i = 0; i < 6; i++) {
-      const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
-      mesesOpts.push({ year: d.getFullYear(), month: d.getMonth() + 1 });
-    }
+    // ── MENSALIDADES ──────────────────────────────────────────────
+    // Busca todos os pares (year, month) distintos que existem no banco
+    // usando select real (count+head pode retornar null no Supabase JS v2)
+    const { data: allFees } = await SB.from('monthly_fees')
+      .select('year,month,status')
+      .order('year', { ascending: true })
+      .order('month', { ascending: true });
 
-    // Verificar quais têm ao menos 1 registro
-    const checks = await Promise.all(mesesOpts.map(m =>
-      SB.from('monthly_fees').select('id', { count: 'exact', head: true }).eq('year', m.year).eq('month', m.month)
-    ));
-    const mesesComDados = mesesOpts.filter((m, i) => (checks[i].count || 0) > 0);
+    // Agrupa por mês e verifica pendência
+    const mesesMap = {}; // `${year}-${month}` → { year, month, temPendente }
+    (allFees || []).forEach(f => {
+      const key = `${f.year}-${f.month}`;
+      if (!mesesMap[key]) mesesMap[key] = { year: f.year, month: f.month, temPendente: false };
+      if (f.status !== 'pago' && f.status !== 'isento') mesesMap[key].temPendente = true;
+    });
 
-    if (mesesComDados.length === 0) {
+    const meses = Object.values(mesesMap).sort((a,b) =>
+      a.year !== b.year ? a.year - b.year : a.month - b.month
+    );
+
+    // Guarda no cache para o botão "Só com pendente"
+    _relFeesPendencia = {};
+    meses.forEach(m => { _relFeesPendencia[`${m.year}-${m.month}`] = m.temPendente; });
+
+    if (meses.length === 0) {
       feesList.innerHTML = '<div style="font-size:13px;color:var(--text2);padding:8px 0">Nenhuma mensalidade lançada.</div>';
     } else {
-      feesList.innerHTML = mesesComDados.map(m => {
-        const id = `rel-fee-${m.year}-${m.month}`;
-        const label = `${nomeMeses[m.month-1]} / ${m.year}`;
-        // pré-seleciona os 2 mais recentes
-        const checked = mesesComDados.indexOf(m) < 2 ? 'checked' : '';
-        return `<label style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
-          <input type="checkbox" id="${id}" data-year="${m.year}" data-month="${m.month}" ${checked} class="rel-fee-cb" style="width:17px;height:17px;accent-color:var(--accent)">
-          <span style="font-size:14px">${label}</span>
-        </label>`;
+      // Pré-seleciona: meses com pendência + o mês atual se existir
+      const mesAtualKey = `${hoje.getFullYear()}-${hoje.getMonth()+1}`;
+      feesList.innerHTML = meses.map(m => {
+        const key     = `${m.year}-${m.month}`;
+        const id      = `rel-fee-${key}`;
+        const label   = `${nomeMeses[m.month-1]} / ${m.year}`;
+        const checked = m.temPendente || key === mesAtualKey ? 'checked' : '';
+        // Badge de status
+        const badge   = m.temPendente
+          ? `<span style="font-size:10px;background:#7c2d12;color:#fdba74;border-radius:4px;padding:1px 6px;margin-left:6px">Pendente</span>`
+          : `<span style="font-size:10px;background:#14532d;color:#86efac;border-radius:4px;padding:1px 6px;margin-left:6px">Quitado</span>`;
+        // Se quitado, inicia colapsado
+        const collId  = `rel-fee-row-${key}`;
+        return `<div id="${collId}">
+          <label style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
+            <input type="checkbox" id="${id}" data-year="${m.year}" data-month="${m.month}" data-pendente="${m.temPendente}" ${checked} class="rel-fee-cb" style="width:17px;height:17px;accent-color:var(--accent)">
+            <span style="font-size:14px;flex:1">${label}${badge}</span>
+          </label>
+        </div>`;
       }).join('');
     }
 
-    // Buscar cobranças (vencidas com pendente + próximas 30 dias)
-    const hojeStr   = hoje.toISOString().split('T')[0];
-    const hoje30    = new Date(hoje); hoje30.setDate(hoje30.getDate() + 30);
-    const hoje30Str = hoje30.toISOString().split('T')[0];
+    // ── COBRANÇAS EXTRAS ──────────────────────────────────────────
+    await _carregarListaCobranças();
 
+  } catch(e) {
+    console.error('carregarOpcoesRelatorio:', e);
+    feesList.innerHTML    = '<div style="font-size:13px;color:var(--error);padding:8px 0">Erro ao carregar mensalidades.</div>';
+    chargesList.innerHTML = '<div style="font-size:13px;color:var(--error);padding:8px 0">Erro ao carregar cobranças.</div>';
+  }
+}
+
+async function _carregarListaCobranças() {
+  const chargesList = document.getElementById('rel-charges-list');
+  if (!chargesList) return;
+  chargesList.innerHTML = '<div style="font-size:13px;color:var(--text2);padding:8px 0">Carregando...</div>';
+
+  const hoje    = new Date();
+  const hojeStr = hoje.toISOString().split('T')[0];
+  const diasFrente = parseInt(document.getElementById('rel-dias-frente')?.value || '15');
+  const futuro  = new Date(hoje); futuro.setDate(futuro.getDate() + diasFrente);
+  const futuroStr = futuro.toISOString().split('T')[0];
+
+  try {
     const { data: todasCharges } = await SB.from('extra_charges')
       .select('id,title,due_date,amount')
-      .order('due_date', { ascending: false });
+      .order('due_date', { ascending: true });
 
-    const charges = (todasCharges || []).filter(c =>
-      c.due_date >= hojeStr && c.due_date <= hoje30Str || c.due_date < hojeStr
+    // Vencidas ou dentro do período configurado
+    const candidatas = (todasCharges || []).filter(c =>
+      !c.due_date || c.due_date <= futuroStr
     );
 
-    // Para vencidas, checar se tem pendente
-    let chargesExibir = [];
-    if (charges.length > 0) {
-      const ids = charges.map(c => c.id);
-      const { data: ecaData } = await SB.from('extra_charge_athletes')
-        .select('extra_charge_id,status')
-        .in('extra_charge_id', ids)
-        .eq('status','pendente');
-      const comPendente = new Set((ecaData || []).map(e => e.extra_charge_id));
-      chargesExibir = charges.filter(c =>
-        c.due_date >= hojeStr ? true : comPendente.has(c.id)
-      );
+    if (candidatas.length === 0) {
+      chargesList.innerHTML = '<div style="font-size:13px;color:var(--text2);padding:8px 0">Nenhuma cobrança a exibir.</div>';
+      return;
     }
+
+    // Verificar quais têm pendente
+    const ids = candidatas.map(c => c.id);
+    const { data: ecaData } = await SB.from('extra_charge_athletes')
+      .select('extra_charge_id,status')
+      .in('extra_charge_id', ids);
+
+    const statusPorCharge = {}; // charge_id → { total, pendentes }
+    (ecaData || []).forEach(e => {
+      if (!statusPorCharge[e.extra_charge_id]) statusPorCharge[e.extra_charge_id] = { total: 0, pendentes: 0 };
+      statusPorCharge[e.extra_charge_id].total++;
+      if (e.status === 'pendente') statusPorCharge[e.extra_charge_id].pendentes++;
+    });
+
+    // Para vencidas: só exibe se tiver pendente. A vencer: sempre exibe.
+    const chargesExibir = candidatas.filter(c => {
+      if (!c.due_date || c.due_date >= hojeStr) return true; // a vencer ou sem data
+      return (statusPorCharge[c.id]?.pendentes || 0) > 0;   // vencida com pendente
+    });
 
     if (chargesExibir.length === 0) {
       chargesList.innerHTML = '<div style="font-size:13px;color:var(--text2);padding:8px 0">Nenhuma cobrança com pendência ou a vencer.</div>';
-    } else {
-      chargesList.innerHTML = chargesExibir.map(c => {
-        const id = `rel-charge-${c.id}`;
-        const dueFmt = c.due_date ? c.due_date.split('-').reverse().join('/') : '';
-        const vencida = c.due_date < hojeStr;
-        const badge = vencida
-          ? `<span style="font-size:10px;background:#7f1d1d;color:#fca5a5;border-radius:4px;padding:1px 5px;margin-left:6px">Vencida</span>`
-          : `<span style="font-size:10px;background:var(--bg3);color:var(--text2);border-radius:4px;padding:1px 5px;margin-left:6px">Vence ${dueFmt}</span>`;
-        const valStr = c.amount ? ` — R$\u00a0${Number(c.amount).toLocaleString('pt-BR',{minimumFractionDigits:2})}` : '';
-        return `<label style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
-          <input type="checkbox" id="${id}" data-charge-id="${c.id}" checked class="rel-charge-cb" style="width:17px;height:17px;accent-color:var(--accent);margin-top:2px">
-          <span style="font-size:14px">${c.title}${valStr}${badge}</span>
-        </label>`;
-      }).join('');
+      return;
     }
+
+    chargesList.innerHTML = chargesExibir.map(c => {
+      const id      = `rel-charge-${c.id}`;
+      const dueFmt  = c.due_date ? c.due_date.split('-').reverse().join('/') : '';
+      const vencida = c.due_date && c.due_date < hojeStr;
+      const st      = statusPorCharge[c.id] || { total: 0, pendentes: 0 };
+      const badge   = vencida
+        ? `<span style="font-size:10px;background:#7f1d1d;color:#fca5a5;border-radius:4px;padding:1px 5px;margin-left:6px">Vencida ${dueFmt}</span>`
+        : `<span style="font-size:10px;background:var(--bg3);color:var(--text2);border-radius:4px;padding:1px 5px;margin-left:6px">Vence ${dueFmt}</span>`;
+      const pendBadge = st.pendentes > 0
+        ? `<span style="font-size:10px;background:#7c2d12;color:#fdba74;border-radius:4px;padding:1px 5px;margin-left:4px">${st.pendentes} pendente${st.pendentes>1?'s':''}</span>`
+        : '';
+      const valStr  = c.amount ? ` — R$\u00a0${Number(c.amount).toLocaleString('pt-BR',{minimumFractionDigits:2})}` : '';
+      return `<label style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
+        <input type="checkbox" id="${id}" data-charge-id="${c.id}" checked class="rel-charge-cb" style="width:17px;height:17px;accent-color:var(--accent);margin-top:2px">
+        <span style="font-size:13px;flex:1">${c.title}${valStr}${badge}${pendBadge}</span>
+      </label>`;
+    }).join('');
   } catch(e) {
-    feesList.innerHTML    = '<div style="font-size:13px;color:var(--error);padding:8px 0">Erro ao carregar.</div>';
-    chargesList.innerHTML = '<div style="font-size:13px;color:var(--error);padding:8px 0">Erro ao carregar.</div>';
+    console.error('_carregarListaCobranças:', e);
+    chargesList.innerHTML = '<div style="font-size:13px;color:var(--error);padding:8px 0">Erro ao carregar cobranças.</div>';
   }
 }
+
+// Botões de atalho de mensalidades
+function relToggleFees(check) {
+  document.querySelectorAll('.rel-fee-cb').forEach(cb => { cb.checked = check; });
+}
+function relSomentePendentes() {
+  document.querySelectorAll('.rel-fee-cb').forEach(cb => {
+    const key = `${cb.dataset.year}-${cb.dataset.month}`;
+    cb.checked = _relFeesPendencia[key] === true;
+  });
+}
+function recarregarCobranças() { _carregarListaCobranças(); }
 
 async function gerarRelatorio() {
   // Ler seleção dinâmica de mensalidades
