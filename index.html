@@ -3282,6 +3282,9 @@ function showSettingsPage() {
           <button class="btn btn-secondary btn-block" onclick="exportData()">📤 Exportar Dados (JSON)</button>
           <div style="margin-top:10px">
           <button class="btn btn-secondary btn-block" onclick="resetAthletePasswords()">🔑 Redefinir senhas dos atletas para "Atleta"</button>
+          <div style="margin-top:10px">
+          <button class="btn btn-secondary btn-block" id="btn-limpar-caixa-orfaos" onclick="limparCaixaOrfaos()">🧹 Limpar lançamentos órfãos do caixa</button>
+          </div>
           </div>
           <div style="margin-top:10px">
           <button class="btn btn-danger btn-block" onclick="doLogout()">Sair do Sistema</button>
@@ -3743,6 +3746,49 @@ async function exportData() {
 }
 
 // ===================== ADMIN: RESET SENHAS =====================
+async function limparCaixaOrfaos() {
+  const btn = document.getElementById('btn-limpar-caixa-orfaos');
+  if (btn) { btn.innerHTML = '<span class="spinner"></span> Verificando...'; btn.disabled = true; }
+  try {
+    // Buscar todos os lançamentos de cobrança extra
+    const { data: lancamentos } = await SB.from('caixa_lancamentos')
+      .select('id,origem_id')
+      .eq('origem', 'cobranca_extra');
+
+    if (!lancamentos || lancamentos.length === 0) {
+      toast('Nenhum lançamento de cobrança extra no caixa.', 'success');
+      return;
+    }
+
+    // Extrair os IDs dos vínculos (formato 'eca_XXXX')
+    const ecaIds = lancamentos.map(l => l.origem_id.replace('eca_', ''));
+
+    // Verificar quais vínculos ainda existem
+    const { data: ecasVivas } = await SB.from('extra_charge_athletes')
+      .select('id')
+      .in('id', ecaIds);
+
+    const vivasSet = new Set((ecasVivas || []).map(e => 'eca_' + e.id));
+    const orfaos = lancamentos.filter(l => !vivasSet.has(l.origem_id));
+
+    if (orfaos.length === 0) {
+      toast('Caixa já está consistente. Nenhum órfão encontrado.', 'success');
+      return;
+    }
+
+    // Deletar órfãos
+    for (const l of orfaos) {
+      await SB.from('caixa_lancamentos').delete().eq('id', l.id);
+    }
+
+    toast(`${orfaos.length} lançamento(s) órfão(s) removido(s) do caixa.`, 'success');
+    if (btn) btn.textContent = `✅ Concluído (${orfaos.length} removido${orfaos.length > 1 ? 's' : ''})`;
+  } catch(e) {
+    toast('Erro ao limpar: ' + e.message, 'error');
+    if (btn) { btn.innerHTML = '🧹 Limpar lançamentos órfãos do caixa'; btn.disabled = false; }
+  }
+}
+
 async function resetAthletePasswords() {
   if (!confirm('Criar/redefinir senha "Atleta" para todos os atletas e técnicos?\n\nAdmins e tesoureiros NÃO serão afetados.')) return;
 
