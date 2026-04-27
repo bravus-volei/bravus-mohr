@@ -3582,11 +3582,11 @@ async function gerarRelatorio() {
     const thNameStyle = `style="padding:8px 6px;text-align:left;font-size:11px;font-weight:700;color:var(--text2);border-bottom:2px solid var(--accent);background:var(--bg2);position:sticky;left:0;z-index:2"`;
     const thTotalStyle= `style="padding:8px 5px;text-align:center;font-size:11px;font-weight:700;color:var(--warn);border-bottom:2px solid var(--accent);white-space:nowrap;background:var(--bg2)"`;
 
-    const theadCols = colunas.map(c => `<th ${thStyle}>${c.label}</th>`).join('') + `<th ${thTotalStyle}>Total\nDevido</th>`;
+    const theadCols = `<th ${thTotalStyle}>Total\nDevido</th>` + colunas.map(c => `<th ${thStyle}>${c.label}</th>`).join('');
 
     const rowsData = athletes.map((ath, idx) => {
       let totalDevido = 0;
-      const bgRow = idx % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
+      const bgRow = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.10)';
       const tdStyle     = `style="padding:7px 5px;text-align:center;font-size:12px;border-bottom:1px solid var(--bg3);background:${bgRow}"`;
       const tdNameStyle = `style="padding:7px 6px;text-align:left;font-size:13px;font-weight:600;border-bottom:1px solid var(--bg3);background:${bgRow};position:sticky;left:0;z-index:1;max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"`;
 
@@ -3611,7 +3611,7 @@ async function gerarRelatorio() {
       const tdTotalStyle = `style="padding:7px 5px;text-align:center;font-size:12px;font-weight:700;border-bottom:1px solid var(--bg3);background:${bgRow};color:${totalDevido > 0 ? 'var(--warn)' : 'var(--success)'}"`;
       const totalCell = `<td ${tdTotalStyle}>${totalDevido > 0 ? fmtBRL(totalDevido) : '✅'}</td>`;
       const apelido = ath.nickname ? ` (${ath.nickname})` : '';
-      return { html: `<tr><td ${tdNameStyle} title="${ath.name}${apelido}">${ath.name}</td>${cells}${totalCell}</tr>`, totalDevido };
+      return { html: `<tr><td ${tdNameStyle} title="${ath.name}${apelido}">${ath.name}</td>${totalCell}${cells}</tr>`, totalDevido };
     });
 
     // Aplicar filtro de devedores
@@ -3690,11 +3690,12 @@ function imprimirRelatorio() {
       table { width: 100%; border-collapse: collapse; font-size: 10px; }
       th { background: #1e293b; color: #fff; padding: 7px 5px; text-align: center; white-space: nowrap; font-size: 9px; }
       th:first-child { text-align: left; }
-      th:last-child { color: #fbbf24; }
+      th:nth-child(2) { color: #fbbf24; }
       td { padding: 5px; border-bottom: 1px solid #e2e8f0; text-align: center; white-space: nowrap; }
       td:first-child { text-align: left; font-weight: 600; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
-      td:last-child { font-weight: 700; }
-      tr:nth-child(even) td { background: #f8fafc; }
+      td:nth-child(2) { font-weight: 700; }
+      tr:nth-child(odd) td { background: #fff; }
+      tr:nth-child(even) td { background: #f1f5f9; }
       .pend { color: #d97706; font-weight: 600; }
       .ok   { color: #16a34a; }
       .legend { margin-top: 12px; font-size: 10px; color: #555; display: flex; gap: 20px; flex-wrap: wrap; }
