@@ -3226,28 +3226,25 @@ function showSettingsPage() {
       </div>
       <div id="settings-relatorio" class="settings-tab-content">
         <div class="card">
-          <div class="card-title" style="margin-bottom:12px">📊 Configurar Relatório</div>
-          <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Selecione as colunas que deseja exibir no relatório financeiro dos atletas.</p>
+          <div class="card-title" style="margin-bottom:4px">📊 Configurar Relatório</div>
+          <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Escolha o que deseja exibir. Apenas colunas selecionadas aparecerão.</p>
 
-          <div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Mensalidades</div>
-          <label style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
-            <input type="checkbox" id="rel-fee-mes-atual" checked style="width:18px;height:18px;accent-color:var(--accent)">
-            <span style="font-size:14px">Mensalidade — mês atual</span>
-          </label>
-          <label style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
-            <input type="checkbox" id="rel-fee-mes-ant" checked style="width:18px;height:18px;accent-color:var(--accent)">
-            <span style="font-size:14px">Mensalidade — mês anterior</span>
+          <!-- Filtro de exibição -->
+          <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg3);border-radius:8px;cursor:pointer;margin-bottom:14px">
+            <input type="checkbox" id="rel-apenas-devedores" checked style="width:18px;height:18px;accent-color:var(--accent)">
+            <div>
+              <div style="font-size:14px;font-weight:600">Mostrar apenas atletas com débito</div>
+              <div style="font-size:12px;color:var(--text2)">Oculta atletas 100% em dia</div>
+            </div>
           </label>
 
-          <div style="font-size:13px;font-weight:700;color:var(--text2);margin-top:16px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Cobranças Extras</div>
-          <label style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
-            <input type="checkbox" id="rel-charge-vencidas" checked style="width:18px;height:18px;accent-color:var(--accent)">
-            <span style="font-size:14px">Cobranças vencidas com pendência</span>
-          </label>
-          <label style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
-            <input type="checkbox" id="rel-charge-proximas" checked style="width:18px;height:18px;accent-color:var(--accent)">
-            <span style="font-size:14px">Cobranças a vencer (próximos 30 dias)</span>
-          </label>
+          <!-- Mensalidades dinâmicas -->
+          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Mensalidades</div>
+          <div id="rel-fees-list"><div style="font-size:13px;color:var(--text2);padding:8px 0">Carregando...</div></div>
+
+          <!-- Cobranças dinâmicas -->
+          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-top:16px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Cobranças Extras</div>
+          <div id="rel-charges-list"><div style="font-size:13px;color:var(--text2);padding:8px 0">Carregando...</div></div>
 
           <div style="display:flex;gap:8px;margin-top:18px">
             <button class="btn btn-primary" style="flex:2" onclick="gerarRelatorio()">📊 Gerar Relatório</button>
@@ -3283,6 +3280,7 @@ function showSettingsTab(tab) {
   });
   if (tab === 'financeiro') updatePixQr();
   if (tab === 'posicoes') renderPositions();
+  if (tab === 'relatorio') carregarOpcoesRelatorio();
 }
 
 function loadSettingsForm() {
@@ -3333,13 +3331,106 @@ function renderPositions() {
 }
 
 // ===================== RELATÓRIO FINANCEIRO =====================
-async function gerarRelatorio() {
-  const incFeeAtual  = document.getElementById('rel-fee-mes-atual')?.checked;
-  const incFeeAnt    = document.getElementById('rel-fee-mes-ant')?.checked;
-  const incVencidas  = document.getElementById('rel-charge-vencidas')?.checked;
-  const incProximas  = document.getElementById('rel-charge-proximas')?.checked;
 
-  if (!incFeeAtual && !incFeeAnt && !incVencidas && !incProximas) {
+async function carregarOpcoesRelatorio() {
+  const feesList    = document.getElementById('rel-fees-list');
+  const chargesList = document.getElementById('rel-charges-list');
+  if (!feesList || !chargesList) return;
+
+  feesList.innerHTML    = '<div style="font-size:13px;color:var(--text2);padding:8px 0">Carregando...</div>';
+  chargesList.innerHTML = '<div style="font-size:13px;color:var(--text2);padding:8px 0">Carregando...</div>';
+
+  const nomeMeses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const hoje = new Date();
+
+  try {
+    // Buscar meses distintos com mensalidades lançadas (últimos 6 meses)
+    const mesesOpts = [];
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+      mesesOpts.push({ year: d.getFullYear(), month: d.getMonth() + 1 });
+    }
+
+    // Verificar quais têm ao menos 1 registro
+    const checks = await Promise.all(mesesOpts.map(m =>
+      SB.from('monthly_fees').select('id', { count: 'exact', head: true }).eq('year', m.year).eq('month', m.month)
+    ));
+    const mesesComDados = mesesOpts.filter((m, i) => (checks[i].count || 0) > 0);
+
+    if (mesesComDados.length === 0) {
+      feesList.innerHTML = '<div style="font-size:13px;color:var(--text2);padding:8px 0">Nenhuma mensalidade lançada.</div>';
+    } else {
+      feesList.innerHTML = mesesComDados.map(m => {
+        const id = `rel-fee-${m.year}-${m.month}`;
+        const label = `${nomeMeses[m.month-1]} / ${m.year}`;
+        // pré-seleciona os 2 mais recentes
+        const checked = mesesComDados.indexOf(m) < 2 ? 'checked' : '';
+        return `<label style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
+          <input type="checkbox" id="${id}" data-year="${m.year}" data-month="${m.month}" ${checked} class="rel-fee-cb" style="width:17px;height:17px;accent-color:var(--accent)">
+          <span style="font-size:14px">${label}</span>
+        </label>`;
+      }).join('');
+    }
+
+    // Buscar cobranças (vencidas com pendente + próximas 30 dias)
+    const hojeStr   = hoje.toISOString().split('T')[0];
+    const hoje30    = new Date(hoje); hoje30.setDate(hoje30.getDate() + 30);
+    const hoje30Str = hoje30.toISOString().split('T')[0];
+
+    const { data: todasCharges } = await SB.from('extra_charges')
+      .select('id,title,due_date,amount')
+      .order('due_date', { ascending: false });
+
+    const charges = (todasCharges || []).filter(c =>
+      c.due_date >= hojeStr && c.due_date <= hoje30Str || c.due_date < hojeStr
+    );
+
+    // Para vencidas, checar se tem pendente
+    let chargesExibir = [];
+    if (charges.length > 0) {
+      const ids = charges.map(c => c.id);
+      const { data: ecaData } = await SB.from('extra_charge_athletes')
+        .select('extra_charge_id,status')
+        .in('extra_charge_id', ids)
+        .eq('status','pendente');
+      const comPendente = new Set((ecaData || []).map(e => e.extra_charge_id));
+      chargesExibir = charges.filter(c =>
+        c.due_date >= hojeStr ? true : comPendente.has(c.id)
+      );
+    }
+
+    if (chargesExibir.length === 0) {
+      chargesList.innerHTML = '<div style="font-size:13px;color:var(--text2);padding:8px 0">Nenhuma cobrança com pendência ou a vencer.</div>';
+    } else {
+      chargesList.innerHTML = chargesExibir.map(c => {
+        const id = `rel-charge-${c.id}`;
+        const dueFmt = c.due_date ? c.due_date.split('-').reverse().join('/') : '';
+        const vencida = c.due_date < hojeStr;
+        const badge = vencida
+          ? `<span style="font-size:10px;background:#7f1d1d;color:#fca5a5;border-radius:4px;padding:1px 5px;margin-left:6px">Vencida</span>`
+          : `<span style="font-size:10px;background:var(--bg3);color:var(--text2);border-radius:4px;padding:1px 5px;margin-left:6px">Vence ${dueFmt}</span>`;
+        const valStr = c.amount ? ` — R$\u00a0${Number(c.amount).toLocaleString('pt-BR',{minimumFractionDigits:2})}` : '';
+        return `<label style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
+          <input type="checkbox" id="${id}" data-charge-id="${c.id}" checked class="rel-charge-cb" style="width:17px;height:17px;accent-color:var(--accent);margin-top:2px">
+          <span style="font-size:14px">${c.title}${valStr}${badge}</span>
+        </label>`;
+      }).join('');
+    }
+  } catch(e) {
+    feesList.innerHTML    = '<div style="font-size:13px;color:var(--error);padding:8px 0">Erro ao carregar.</div>';
+    chargesList.innerHTML = '<div style="font-size:13px;color:var(--error);padding:8px 0">Erro ao carregar.</div>';
+  }
+}
+
+async function gerarRelatorio() {
+  // Ler seleção dinâmica de mensalidades
+  const feesCbs = [...document.querySelectorAll('.rel-fee-cb:checked')];
+  // Ler seleção dinâmica de cobranças
+  const chargesCbs = [...document.querySelectorAll('.rel-charge-cb:checked')];
+  // Filtro de devedores
+  const apenasDevedores = document.getElementById('rel-apenas-devedores')?.checked ?? true;
+
+  if (feesCbs.length === 0 && chargesCbs.length === 0) {
     toast('Selecione ao menos uma coluna', 'error'); return;
   }
 
@@ -3347,150 +3438,126 @@ async function gerarRelatorio() {
   if (btnGerar) { btnGerar.innerHTML = '<span class="spinner"></span> Carregando...'; btnGerar.disabled = true; }
 
   const fmtBRL = v => v != null ? 'R$\u00a0' + Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
+  const nomeMeses = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 
   try {
     const hoje = new Date();
-    const anoAtual  = hoje.getFullYear();
-    const mesAtual  = hoje.getMonth() + 1;
-    const mesAnt    = mesAtual === 1 ? 12 : mesAtual - 1;
-    const anoAnt    = mesAtual === 1 ? anoAtual - 1 : anoAtual;
-    const hoje30    = new Date(hoje); hoje30.setDate(hoje30.getDate() + 30);
-    const hoje30Str = hoje30.toISOString().split('T')[0];
-    const hojeStr   = hoje.toISOString().split('T')[0];
 
     // Buscar atletas ativos ordenados por nome
     const { data: athletes } = await SB.from('athletes').select('id,name,nickname').eq('status','ativo').order('name', { ascending: true });
     if (!athletes || athletes.length === 0) { toast('Nenhum atleta ativo', 'error'); return; }
 
-    // Buscar mensalidades com amount
-    let feesAtual = [], feesAnt = [];
-    if (incFeeAtual) {
-      const { data } = await SB.from('monthly_fees').select('athlete_id,status,amount').eq('year', anoAtual).eq('month', mesAtual);
-      feesAtual = data || [];
-    }
-    if (incFeeAnt) {
-      const { data } = await SB.from('monthly_fees').select('athlete_id,status,amount').eq('year', anoAnt).eq('month', mesAnt);
-      feesAnt = data || [];
-    }
+    // Buscar mensalidades selecionadas — mapFees[`${year}-${month}`][athlete_id] = { status, amount }
+    const mapFees = {};
+    const feesMeta = []; // { year, month, key, label }
+    await Promise.all(feesCbs.map(async cb => {
+      const year  = parseInt(cb.dataset.year);
+      const month = parseInt(cb.dataset.month);
+      const key   = `${year}-${month}`;
+      const { data } = await SB.from('monthly_fees').select('athlete_id,status,amount').eq('year', year).eq('month', month);
+      mapFees[key] = {};
+      (data || []).forEach(f => { mapFees[key][f.athlete_id] = { status: f.status, amount: f.amount }; });
+      feesMeta.push({ year, month, key, label: `Mens. ${nomeMeses[month-1]}/${String(year).slice(-2)}` });
+    }));
+    // Ordenar por data (mais antigo primeiro)
+    feesMeta.sort((a,b) => a.year !== b.year ? a.year - b.year : a.month - b.month);
 
-    // Mapas rápidos: athlete_id → { status, amount }
-    const mapFeeAtual = {};
-    feesAtual.forEach(f => { mapFeeAtual[f.athlete_id] = { status: f.status, amount: f.amount }; });
-    const mapFeeAnt = {};
-    feesAnt.forEach(f => { mapFeeAnt[f.athlete_id] = { status: f.status, amount: f.amount }; });
+    // Buscar cobranças selecionadas
+    const chargeIds = chargesCbs.map(cb => cb.dataset.chargeId);
+    let chargesParaExibir = [];
+    const mapEca = {}; // mapEca[charge_id][athlete_id] = { status, amount }
 
-    // Buscar cobranças extras relevantes com amount
-    let extraCharges = []; // { id, title, due_date, amount }
-    if (incVencidas || incProximas) {
-      let q = SB.from('extra_charges').select('id,title,due_date,amount');
-      if (incVencidas && incProximas) {
-        const { data } = await q.order('due_date', { ascending: true });
-        const todos = data || [];
-        const vencidas = incVencidas ? todos.filter(c => c.due_date < hojeStr) : [];
-        const proximas = incProximas ? todos.filter(c => c.due_date >= hojeStr && c.due_date <= hoje30Str) : [];
-        extraCharges = [...vencidas, ...proximas].filter((c,i,arr) => arr.findIndex(x=>x.id===c.id)===i);
-      } else if (incVencidas) {
-        const { data } = await q.lt('due_date', hojeStr).order('due_date', { ascending: true });
-        extraCharges = data || [];
-      } else {
-        const { data } = await q.gte('due_date', hojeStr).lte('due_date', hoje30Str).order('due_date', { ascending: true });
-        extraCharges = data || [];
-      }
-    }
+    if (chargeIds.length > 0) {
+      const { data: chargesData } = await SB.from('extra_charges').select('id,title,due_date,amount').in('id', chargeIds);
+      chargesParaExibir = (chargesData || []).sort((a,b) => (a.due_date||'').localeCompare(b.due_date||''));
 
-    // Buscar status por atleta de cada cobrança extra
-    // CORRIGIDO: coluna é extra_charge_id, não charge_id
-    // mapEca[extra_charge_id][athlete_id] = { status, amount }
-    const mapEca = {};
-    if (extraCharges.length > 0) {
-      const chargeIds = extraCharges.map(c => c.id);
-      const { data: ecaData } = await SB.from('extra_charge_athletes').select('extra_charge_id,athlete_id,status').in('extra_charge_id', chargeIds);
-      // Mapa de amount por charge_id para usar nas células
+      const { data: ecaData } = await SB.from('extra_charge_athletes')
+        .select('extra_charge_id,athlete_id,status')
+        .in('extra_charge_id', chargeIds);
       const chargeAmountMap = {};
-      extraCharges.forEach(c => { chargeAmountMap[c.id] = c.amount; });
+      chargesParaExibir.forEach(c => { chargeAmountMap[c.id] = c.amount; });
       (ecaData || []).forEach(e => {
         if (!mapEca[e.extra_charge_id]) mapEca[e.extra_charge_id] = {};
         mapEca[e.extra_charge_id][e.athlete_id] = { status: e.status, amount: chargeAmountMap[e.extra_charge_id] };
       });
     }
 
-    // Para cobranças vencidas: remover as que não têm NENHUM pendente
-    let chargesParaExibir = extraCharges;
-    if (incVencidas) {
-      chargesParaExibir = extraCharges.filter(c => {
-        if (c.due_date >= hojeStr) return true; // é próxima, mantém sempre
-        const ecas = mapEca[c.id] || {};
-        return Object.values(ecas).some(s => s.status === 'pendente');
-      });
-    }
-
     // Montar colunas
-    const nomeMeses = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
     const colunas = [];
-    if (incFeeAtual) colunas.push({ key: 'fee_atual', label: `Mens. ${nomeMeses[mesAtual-1]}/${String(anoAtual).slice(-2)}`, tipo: 'fee' });
-    if (incFeeAnt)   colunas.push({ key: 'fee_ant',   label: `Mens. ${nomeMeses[mesAnt-1]}/${String(anoAnt).slice(-2)}`, tipo: 'fee' });
+    feesMeta.forEach(m => colunas.push({ key: 'fee_'+m.key, label: m.label, tipo: 'fee', feeKey: m.key }));
     chargesParaExibir.forEach(c => {
       const dueFmt = c.due_date ? c.due_date.split('-').reverse().join('/').slice(0,5) : '';
-      const label = c.title.length > 18 ? c.title.slice(0,17)+'…' : c.title;
-      colunas.push({ key: 'eca_'+c.id, label: label + (dueFmt ? ` (${dueFmt})` : ''), tipo: 'eca', chargeId: c.id, dueDate: c.due_date });
+      const label  = (c.title.length > 16 ? c.title.slice(0,15)+'…' : c.title) + (dueFmt ? `\n(${dueFmt})` : '');
+      colunas.push({ key: 'eca_'+c.id, label, tipo: 'eca', chargeId: c.id });
     });
 
-    // Montar HTML da tabela
+    // Montar linhas com cálculo de total
     const geradoEm = hoje.toLocaleDateString('pt-BR') + ' ' + hoje.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
     const teamName = settings.team_name || 'Bravus Mohr';
 
-    const thStyle = `style="padding:8px 6px;text-align:center;font-size:11px;font-weight:700;color:var(--text2);border-bottom:2px solid var(--accent);white-space:nowrap;background:var(--bg2)"`;
+    const thStyle     = `style="padding:8px 5px;text-align:center;font-size:11px;font-weight:700;color:var(--text2);border-bottom:2px solid var(--accent);white-space:pre;background:var(--bg2)"`;
     const thNameStyle = `style="padding:8px 6px;text-align:left;font-size:11px;font-weight:700;color:var(--text2);border-bottom:2px solid var(--accent);background:var(--bg2);position:sticky;left:0;z-index:2"`;
-    const thTotalStyle = `style="padding:8px 6px;text-align:center;font-size:11px;font-weight:700;color:var(--warn);border-bottom:2px solid var(--accent);white-space:nowrap;background:var(--bg2)"`;
+    const thTotalStyle= `style="padding:8px 5px;text-align:center;font-size:11px;font-weight:700;color:var(--warn);border-bottom:2px solid var(--accent);white-space:nowrap;background:var(--bg2)"`;
 
-    let theadCols = colunas.map(c => `<th ${thStyle}>${c.label.replace(/\n/g,'<br>')}</th>`).join('');
-    theadCols += `<th ${thTotalStyle}>Total Devido</th>`;
+    const theadCols = colunas.map(c => `<th ${thStyle}>${c.label}</th>`).join('') + `<th ${thTotalStyle}>Total\nDevido</th>`;
 
-    let tbodyRows = athletes.map((ath, idx) => {
-      const bgRow = idx % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
-      const tdStyle = `style="padding:8px 6px;text-align:center;font-size:12px;border-bottom:1px solid var(--bg3);background:${bgRow}"`;
-      const tdNameStyle = `style="padding:8px 6px;text-align:left;font-size:13px;font-weight:600;border-bottom:1px solid var(--bg3);background:${bgRow};position:sticky;left:0;z-index:1;max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"`;
-
+    const rowsData = athletes.map((ath, idx) => {
       let totalDevido = 0;
+      const bgRow = idx % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
+      const tdStyle     = `style="padding:7px 5px;text-align:center;font-size:12px;border-bottom:1px solid var(--bg3);background:${bgRow}"`;
+      const tdNameStyle = `style="padding:7px 6px;text-align:left;font-size:13px;font-weight:600;border-bottom:1px solid var(--bg3);background:${bgRow};position:sticky;left:0;z-index:1;max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"`;
 
       const cells = colunas.map(col => {
         if (col.tipo === 'fee') {
-          const map = col.key === 'fee_atual' ? mapFeeAtual : mapFeeAnt;
-          const rec = map[ath.id];
-          if (!rec)                       return `<td ${tdStyle}><span style="color:var(--text2)" title="Não lançada">—</span></td>`;
-          if (rec.status === 'pago')       return `<td ${tdStyle}><span style="color:var(--success)" title="Pago">✅</span></td>`;
-          if (rec.status === 'isento')     return `<td ${tdStyle}><span style="color:var(--text2)" title="Isento">—</span></td>`;
-          // pendente / atrasado — exibe valor
+          const rec = (mapFees[col.feeKey] || {})[ath.id];
+          if (!rec || rec.status === 'isento') return `<td ${tdStyle}><span style="color:var(--text2)">—</span></td>`;
+          if (rec.status === 'pago')           return `<td ${tdStyle}><span style="color:var(--success)">✅</span></td>`;
           const val = parseFloat(rec.amount) || 0;
           totalDevido += val;
-          return `<td ${tdStyle}><span style="color:var(--warn);font-weight:600" title="Pendente">${fmtBRL(val)}</span></td>`;
-        } else if (col.tipo === 'eca') {
-          const ecas = mapEca[col.chargeId] || {};
-          const rec  = ecas[ath.id];
-          if (!rec || rec.status === 'nao_participa') return `<td ${tdStyle}><span style="color:var(--text2)" title="Não incluso">—</span></td>`;
-          if (rec.status === 'pago')                  return `<td ${tdStyle}><span style="color:var(--success)" title="Pago">✅</span></td>`;
-          // pendente — exibe valor
+          return `<td ${tdStyle}><span style="color:var(--warn);font-weight:600">${fmtBRL(val)}</span></td>`;
+        } else {
+          const rec = (mapEca[col.chargeId] || {})[ath.id];
+          if (!rec || rec.status === 'nao_participa') return `<td ${tdStyle}><span style="color:var(--text2)">—</span></td>`;
+          if (rec.status === 'pago')                  return `<td ${tdStyle}><span style="color:var(--success)">✅</span></td>`;
           const val = parseFloat(rec.amount) || 0;
           totalDevido += val;
-          return `<td ${tdStyle}><span style="color:var(--warn);font-weight:600" title="Pendente">${fmtBRL(val)}</span></td>`;
+          return `<td ${tdStyle}><span style="color:var(--warn);font-weight:600">${fmtBRL(val)}</span></td>`;
         }
-        return `<td ${tdStyle}>—</td>`;
       }).join('');
 
-      // Célula de total
-      const tdTotalStyle = `style="padding:8px 6px;text-align:center;font-size:12px;font-weight:700;border-bottom:1px solid var(--bg3);background:${bgRow};color:${totalDevido > 0 ? 'var(--warn)' : 'var(--success)'}"`;
+      const tdTotalStyle = `style="padding:7px 5px;text-align:center;font-size:12px;font-weight:700;border-bottom:1px solid var(--bg3);background:${bgRow};color:${totalDevido > 0 ? 'var(--warn)' : 'var(--success)'}"`;
       const totalCell = `<td ${tdTotalStyle}>${totalDevido > 0 ? fmtBRL(totalDevido) : '✅'}</td>`;
-
       const apelido = ath.nickname ? ` (${ath.nickname})` : '';
-      return `<tr><td ${tdNameStyle} title="${ath.name}${apelido}">${ath.name}</td>${cells}${totalCell}</tr>`;
-    }).join('');
+      return { html: `<tr><td ${tdNameStyle} title="${ath.name}${apelido}">${ath.name}</td>${cells}${totalCell}</tr>`, totalDevido };
+    });
 
-    // Linha de legenda
+    // Aplicar filtro de devedores
+    const rowsFiltrados = apenasDevedores ? rowsData.filter(r => r.totalDevido > 0) : rowsData;
+
+    if (rowsFiltrados.length === 0) {
+      document.getElementById('relatorio-resultado').innerHTML = `
+        <div class="card" style="text-align:center;padding:32px 16px;color:var(--text2)">
+          <div style="font-size:32px;margin-bottom:8px">✅</div>
+          <div style="font-size:15px;font-weight:600">Nenhum atleta com débito pendente</div>
+          <div style="font-size:13px;margin-top:4px">Todos estão em dia nas colunas selecionadas.</div>
+        </div>`;
+      toast('Nenhum débito encontrado', 'success');
+      return;
+    }
+
+    const tbodyRows = rowsFiltrados.map(r => r.html).join('');
+    const totalGeral = rowsFiltrados.reduce((s,r) => s + r.totalDevido, 0);
+    const nDevedores = rowsFiltrados.filter(r => r.totalDevido > 0).length;
+
     const legend = `<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text2);margin-top:10px;margin-bottom:4px">
       <span><span style="color:var(--success)">✅</span> Pago / Sem débito</span>
       <span><span style="color:var(--warn);font-weight:600">R$</span> Valor pendente</span>
       <span>— Não lançado / Não incluso</span>
     </div>`;
+
+    const resumo = apenasDevedores
+      ? `<div style="font-size:12px;color:var(--text2);margin-top:2px">${nDevedores} atleta(s) com débito · Total: <strong style="color:var(--warn)">${fmtBRL(totalGeral)}</strong></div>`
+      : `<div style="font-size:12px;color:var(--text2);margin-top:2px">${athletes.length} atletas · Total pendente: <strong style="color:var(--warn)">${fmtBRL(totalGeral)}</strong></div>`;
 
     const html = `
       <div class="card" style="padding:0;overflow:hidden">
@@ -3498,14 +3565,13 @@ async function gerarRelatorio() {
           <div>
             <div style="font-size:15px;font-weight:700">${teamName} — Relatório Financeiro</div>
             <div style="font-size:12px;color:var(--text2)">Gerado em ${geradoEm}</div>
+            ${resumo}
           </div>
           <button class="btn btn-secondary" style="font-size:13px" onclick="imprimirRelatorio()">🖨️ Imprimir / PDF</button>
         </div>
         <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
           <table style="width:100%;border-collapse:collapse;min-width:320px" id="relatorio-tabela">
-            <thead><tr>
-              <th ${thNameStyle}>Atleta</th>${theadCols}
-            </tr></thead>
+            <thead><tr><th ${thNameStyle}>Atleta</th>${theadCols}</tr></thead>
             <tbody>${tbodyRows}</tbody>
           </table>
         </div>
@@ -3514,7 +3580,7 @@ async function gerarRelatorio() {
 
     document.getElementById('relatorio-resultado').innerHTML = html;
     document.getElementById('relatorio-resultado').scrollIntoView({ behavior: 'smooth', block: 'start' });
-    toast(`Relatório gerado — ${athletes.length} atletas`, 'success');
+    toast(`Relatório gerado — ${rowsFiltrados.length} atleta(s)`, 'success');
 
   } finally {
     if (btnGerar) { btnGerar.innerHTML = '📊 Gerar Relatório'; btnGerar.disabled = false; }
