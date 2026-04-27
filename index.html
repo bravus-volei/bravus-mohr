@@ -3195,6 +3195,7 @@ function showSettingsPage() {
         <button class="tab active" onclick="showSettingsTab('time')" id="stab-time">Time</button>
         <button class="tab" onclick="showSettingsTab('financeiro')" id="stab-financeiro">Financeiro</button>
         <button class="tab" onclick="showSettingsTab('posicoes')" id="stab-posicoes">Posições</button>
+        <button class="tab" onclick="showSettingsTab('relatorio')" id="stab-relatorio">Relatório</button>
         <button class="tab" onclick="showSettingsTab('sistema')" id="stab-sistema">Sistema</button>
       </div>
       <div id="settings-time" class="settings-tab-content active">
@@ -3223,6 +3224,37 @@ function showSettingsPage() {
           <div id="positions-list"></div>
         </div>
       </div>
+      <div id="settings-relatorio" class="settings-tab-content">
+        <div class="card">
+          <div class="card-title" style="margin-bottom:12px">📊 Configurar Relatório</div>
+          <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Selecione as colunas que deseja exibir no relatório financeiro dos atletas.</p>
+
+          <div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Mensalidades</div>
+          <label style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
+            <input type="checkbox" id="rel-fee-mes-atual" checked style="width:18px;height:18px;accent-color:var(--accent)">
+            <span style="font-size:14px">Mensalidade — mês atual</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
+            <input type="checkbox" id="rel-fee-mes-ant" checked style="width:18px;height:18px;accent-color:var(--accent)">
+            <span style="font-size:14px">Mensalidade — mês anterior</span>
+          </label>
+
+          <div style="font-size:13px;font-weight:700;color:var(--text2);margin-top:16px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Cobranças Extras</div>
+          <label style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
+            <input type="checkbox" id="rel-charge-vencidas" checked style="width:18px;height:18px;accent-color:var(--accent)">
+            <span style="font-size:14px">Cobranças vencidas com pendência</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
+            <input type="checkbox" id="rel-charge-proximas" checked style="width:18px;height:18px;accent-color:var(--accent)">
+            <span style="font-size:14px">Cobranças a vencer (próximos 30 dias)</span>
+          </label>
+
+          <div style="display:flex;gap:8px;margin-top:18px">
+            <button class="btn btn-primary" style="flex:2" onclick="gerarRelatorio()">📊 Gerar Relatório</button>
+          </div>
+        </div>
+        <div id="relatorio-resultado"></div>
+      </div>
       <div id="settings-sistema" class="settings-tab-content">
         <div class="card">
           <div class="form-group"><label>Versão</label><input type="text" value="1.0.0" disabled></div>
@@ -3245,7 +3277,7 @@ function showSettingsPage() {
 }
 
 function showSettingsTab(tab) {
-  ['time','financeiro','posicoes','sistema'].forEach(t => {
+  ['time','financeiro','posicoes','relatorio','sistema'].forEach(t => {
     document.getElementById('settings-'+t).classList.toggle('active', t===tab);
     document.getElementById('stab-'+t).classList.toggle('active', t===tab);
   });
@@ -3298,6 +3330,224 @@ function renderPositions() {
   document.getElementById('positions-list').innerHTML = positions.map(p =>
     `<div style="padding:10px 0;border-bottom:1px solid var(--bg3);font-size:14px">🏐 ${p}</div>`
   ).join('');
+}
+
+// ===================== RELATÓRIO FINANCEIRO =====================
+async function gerarRelatorio() {
+  const incFeeAtual  = document.getElementById('rel-fee-mes-atual')?.checked;
+  const incFeeAnt    = document.getElementById('rel-fee-mes-ant')?.checked;
+  const incVencidas  = document.getElementById('rel-charge-vencidas')?.checked;
+  const incProximas  = document.getElementById('rel-charge-proximas')?.checked;
+
+  if (!incFeeAtual && !incFeeAnt && !incVencidas && !incProximas) {
+    toast('Selecione ao menos uma coluna', 'error'); return;
+  }
+
+  const btnGerar = document.querySelector('#settings-relatorio .btn-primary');
+  if (btnGerar) { btnGerar.innerHTML = '<span class="spinner"></span> Carregando...'; btnGerar.disabled = true; }
+
+  try {
+    const hoje = new Date();
+    const anoAtual  = hoje.getFullYear();
+    const mesAtual  = hoje.getMonth() + 1;
+    const mesAnt    = mesAtual === 1 ? 12 : mesAtual - 1;
+    const anoAnt    = mesAtual === 1 ? anoAtual - 1 : anoAtual;
+    const hoje30    = new Date(hoje); hoje30.setDate(hoje30.getDate() + 30);
+    const hoje30Str = hoje30.toISOString().split('T')[0];
+    const hojeStr   = hoje.toISOString().split('T')[0];
+
+    // Buscar atletas ativos ordenados por nome
+    const { data: athletes } = await SB.from('athletes').select('id,name,nickname').eq('status','ativo').order('name', { ascending: true });
+    if (!athletes || athletes.length === 0) { toast('Nenhum atleta ativo', 'error'); return; }
+
+    const athIds = athletes.map(a => a.id);
+
+    // Buscar mensalidades
+    let feesAtual = [], feesAnt = [];
+    if (incFeeAtual) {
+      const { data } = await SB.from('monthly_fees').select('athlete_id,status,paid_at').eq('year', anoAtual).eq('month', mesAtual);
+      feesAtual = data || [];
+    }
+    if (incFeeAnt) {
+      const { data } = await SB.from('monthly_fees').select('athlete_id,status,paid_at').eq('year', anoAnt).eq('month', mesAnt);
+      feesAnt = data || [];
+    }
+
+    // Mapas rápidos: athlete_id → status
+    const mapFeeAtual = {};
+    feesAtual.forEach(f => { mapFeeAtual[f.athlete_id] = f.status; });
+    const mapFeeAnt = {};
+    feesAnt.forEach(f => { mapFeeAnt[f.athlete_id] = f.status; });
+
+    // Buscar cobranças extras relevantes
+    let extraCharges = []; // { id, title, due_date }
+    if (incVencidas || incProximas) {
+      // Cobranças vencidas com pendência
+      let q = SB.from('extra_charges').select('id,title,due_date');
+      if (incVencidas && incProximas) {
+        // vencidas pendentes OU proximas 30 dias — busca tudo e filtra depois
+        const { data } = await q.order('due_date', { ascending: true });
+        const todos = data || [];
+        const vencidas = incVencidas ? todos.filter(c => c.due_date < hojeStr) : [];
+        const proximas = incProximas ? todos.filter(c => c.due_date >= hojeStr && c.due_date <= hoje30Str) : [];
+        // Para vencidas, só incluir se tiver pelo menos 1 atleta pendente (filtramos depois)
+        extraCharges = [...vencidas, ...proximas].filter((c,i,arr) => arr.findIndex(x=>x.id===c.id)===i);
+      } else if (incVencidas) {
+        const { data } = await q.lt('due_date', hojeStr).order('due_date', { ascending: true });
+        extraCharges = data || [];
+      } else {
+        const { data } = await q.gte('due_date', hojeStr).lte('due_date', hoje30Str).order('due_date', { ascending: true });
+        extraCharges = data || [];
+      }
+    }
+
+    // Buscar status por atleta de cada cobrança extra
+    // mapEca[charge_id][athlete_id] = 'pago' | 'pendente'
+    const mapEca = {};
+    if (extraCharges.length > 0) {
+      const chargeIds = extraCharges.map(c => c.id);
+      const { data: ecaData } = await SB.from('extra_charge_athletes').select('charge_id,athlete_id,status').in('charge_id', chargeIds);
+      (ecaData || []).forEach(e => {
+        if (!mapEca[e.charge_id]) mapEca[e.charge_id] = {};
+        mapEca[e.charge_id][e.athlete_id] = e.status;
+      });
+    }
+
+    // Para cobranças vencidas: remover as que não têm NENHUM pendente
+    let chargesParaExibir = extraCharges;
+    if (incVencidas) {
+      chargesParaExibir = extraCharges.filter(c => {
+        if (c.due_date >= hojeStr) return true; // é próxima, mantém sempre
+        // é vencida: só mantém se tiver pelo menos 1 atleta pendente
+        const ecas = mapEca[c.id] || {};
+        return Object.values(ecas).some(s => s === 'pendente');
+      });
+    }
+
+    // Montar colunas
+    const nomeMeses = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    const colunas = [];
+    if (incFeeAtual) colunas.push({ key: 'fee_atual', label: `Mens. ${nomeMeses[mesAtual-1]}/${String(anoAtual).slice(-2)}`, tipo: 'fee' });
+    if (incFeeAnt)   colunas.push({ key: 'fee_ant',   label: `Mens. ${nomeMeses[mesAnt-1]}/${String(anoAnt).slice(-2)}`, tipo: 'fee' });
+    chargesParaExibir.forEach(c => {
+      const dueFmt = c.due_date ? c.due_date.split('-').reverse().join('/').slice(0,5) : '';
+      const label = c.title.length > 18 ? c.title.slice(0,17)+'…' : c.title;
+      colunas.push({ key: 'eca_'+c.id, label: label + (dueFmt ? ` (${dueFmt})` : ''), tipo: 'eca', chargeId: c.id, dueDate: c.due_date });
+    });
+
+    // Montar HTML da tabela
+    const geradoEm = hoje.toLocaleDateString('pt-BR') + ' ' + hoje.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    const teamName = settings.team_name || 'Bravus Mohr';
+
+    const thStyle = `style="padding:8px 6px;text-align:center;font-size:11px;font-weight:700;color:var(--text2);border-bottom:2px solid var(--accent);white-space:nowrap;background:var(--bg2)"`;
+    const thNameStyle = `style="padding:8px 6px;text-align:left;font-size:11px;font-weight:700;color:var(--text2);border-bottom:2px solid var(--accent);background:var(--bg2);position:sticky;left:0;z-index:2"`;
+
+    let theadCols = colunas.map(c => `<th ${thStyle}>${c.label.replace(/\n/g,'<br>')}</th>`).join('');
+
+    let tbodyRows = athletes.map((ath, idx) => {
+      const bgRow = idx % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
+      const tdStyle = `style="padding:8px 6px;text-align:center;font-size:13px;border-bottom:1px solid var(--bg3);background:${bgRow}"`;
+      const tdNameStyle = `style="padding:8px 6px;text-align:left;font-size:13px;font-weight:600;border-bottom:1px solid var(--bg3);background:${bgRow};position:sticky;left:0;z-index:1;max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"`;
+
+      const cells = colunas.map(col => {
+        let icon = '—', cls = '', title = '';
+        if (col.tipo === 'fee') {
+          const map = col.key === 'fee_atual' ? mapFeeAtual : mapFeeAnt;
+          const st  = map[ath.id];
+          if (!st)              { icon = '—';  cls = 'color:var(--text2)'; title = 'Não lançada'; }
+          else if (st==='pago') { icon = '✅'; cls = 'color:var(--success)'; title = 'Pago'; }
+          else                  { icon = '⚠️'; cls = 'color:var(--warn)'; title = 'Pendente'; }
+        } else if (col.tipo === 'eca') {
+          const ecas = mapEca[col.chargeId] || {};
+          const st   = ecas[ath.id];
+          if (!st)              { icon = '—';  cls = 'color:var(--text2)'; title = 'Não incluso'; }
+          else if (st==='pago') { icon = '✅'; cls = 'color:var(--success)'; title = 'Pago'; }
+          else                  { icon = '⚠️'; cls = 'color:var(--warn)'; title = 'Pendente'; }
+        }
+        return `<td ${tdStyle}><span style="${cls}" title="${title}">${icon}</span></td>`;
+      }).join('');
+
+      const apelido = ath.nickname ? ` (${ath.nickname})` : '';
+      return `<tr><td ${tdNameStyle} title="${ath.name}${apelido}">${ath.name}</td>${cells}</tr>`;
+    }).join('');
+
+    // Linha de legenda
+    const legend = `<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text2);margin-top:10px;margin-bottom:4px">
+      <span><span style="color:var(--success)">✅</span> Pago</span>
+      <span><span style="color:var(--warn)">⚠️</span> Pendente</span>
+      <span>— Não lançado / Não incluso</span>
+    </div>`;
+
+    const html = `
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div>
+            <div style="font-size:15px;font-weight:700">${teamName} — Relatório Financeiro</div>
+            <div style="font-size:12px;color:var(--text2)">Gerado em ${geradoEm}</div>
+          </div>
+          <button class="btn btn-secondary" style="font-size:13px" onclick="imprimirRelatorio()">🖨️ Imprimir / PDF</button>
+        </div>
+        <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+          <table style="width:100%;border-collapse:collapse;min-width:320px" id="relatorio-tabela">
+            <thead><tr>
+              <th ${thNameStyle}>Atleta</th>${theadCols}
+            </tr></thead>
+            <tbody>${tbodyRows}</tbody>
+          </table>
+        </div>
+        <div style="padding:8px 16px 14px">${legend}</div>
+      </div>`;
+
+    document.getElementById('relatorio-resultado').innerHTML = html;
+    document.getElementById('relatorio-resultado').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    toast(`Relatório gerado — ${athletes.length} atletas`, 'success');
+
+  } finally {
+    if (btnGerar) { btnGerar.innerHTML = '📊 Gerar Relatório'; btnGerar.disabled = false; }
+  }
+}
+
+function imprimirRelatorio() {
+  const tabela = document.getElementById('relatorio-tabela');
+  if (!tabela) { toast('Gere o relatório primeiro', 'error'); return; }
+
+  const teamName = settings.team_name || 'Bravus Mohr';
+  const hoje = new Date();
+  const geradoEm = hoje.toLocaleDateString('pt-BR') + ' ' + hoje.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+
+  const win = window.open('', '_blank');
+  win.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="UTF-8">
+    <title>Relatório Financeiro — ${teamName}</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: Arial, sans-serif; font-size: 12px; color: #111; background: #fff; padding: 20px; }
+      h2 { font-size: 16px; margin-bottom: 4px; }
+      .sub { font-size: 11px; color: #555; margin-bottom: 14px; }
+      table { width: 100%; border-collapse: collapse; font-size: 11px; }
+      th { background: #1e293b; color: #fff; padding: 7px 6px; text-align: center; white-space: nowrap; font-size: 10px; }
+      th:first-child { text-align: left; }
+      td { padding: 6px; border-bottom: 1px solid #e2e8f0; text-align: center; }
+      td:first-child { text-align: left; font-weight: 600; max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      tr:nth-child(even) td { background: #f8fafc; }
+      .legend { margin-top: 12px; font-size: 11px; color: #555; display: flex; gap: 20px; }
+      @media print {
+        body { padding: 10px; }
+        button { display: none; }
+      }
+    </style>
+  </head><body>
+    <h2>${teamName} — Relatório Financeiro</h2>
+    <div class="sub">Gerado em ${geradoEm}</div>
+    ${tabela.outerHTML}
+    <div class="legend">
+      <span>✅ Pago</span>
+      <span>⚠️ Pendente</span>
+      <span>— Não lançado / Não incluso</span>
+    </div>
+    <script>window.onload = function(){ window.print(); }<\/script>
+  </body></html>`);
+  win.document.close();
 }
 
 async function exportData() {
