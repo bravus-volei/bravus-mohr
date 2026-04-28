@@ -3274,6 +3274,30 @@ function showSettingsPage() {
           </div>
         </div>
         <div id="relatorio-resultado"></div>
+        <!-- RELATÓRIO DE CAIXA -->
+        <div class="card" style="margin-top:16px">
+          <div class="card-title" style="margin-bottom:4px">💰 Relatório de Caixa</div>
+          <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Selecione o ano e os meses para gerar o extrato do caixa.</p>
+
+          <!-- Seleção de ano -->
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+            <span style="font-size:13px;color:var(--text2);font-weight:600">Ano:</span>
+            <select id="caixa-rel-ano" style="padding:6px 10px;border-radius:8px;border:1px solid var(--bg3);background:var(--bg2);color:var(--text);font-size:13px" onchange="carregarMesesCaixa()"></select>
+          </div>
+
+          <!-- Seleção de meses -->
+          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">Meses</div>
+          <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+            <button class="btn btn-secondary" style="font-size:12px;padding:5px 10px" onclick="caixaRelToggleMeses(true)">Todos</button>
+            <button class="btn btn-secondary" style="font-size:12px;padding:5px 10px" onclick="caixaRelToggleMeses(false)">Nenhum</button>
+          </div>
+          <div id="caixa-rel-meses-list"><div style="font-size:13px;color:var(--text2);padding:8px 0">Carregando...</div></div>
+
+          <div style="display:flex;gap:8px;margin-top:18px">
+            <button class="btn btn-primary" style="flex:2" onclick="gerarRelatorioCaixa()">💰 Gerar Relatório de Caixa</button>
+          </div>
+        </div>
+        <div id="relatorio-caixa-resultado"></div>
       </div>
       <div id="settings-sistema" class="settings-tab-content">
         <div class="card">
@@ -3306,7 +3330,7 @@ function showSettingsTab(tab) {
   });
   if (tab === 'financeiro') updatePixQr();
   if (tab === 'posicoes') renderPositions();
-  if (tab === 'relatorio') carregarOpcoesRelatorio();
+  if (tab === 'relatorio') { carregarOpcoesRelatorio(); carregarAnoCaixa(); }
 }
 
 function loadSettingsForm() {
@@ -3354,6 +3378,306 @@ function renderPositions() {
   document.getElementById('positions-list').innerHTML = positions.map(p =>
     `<div style="padding:10px 0;border-bottom:1px solid var(--bg3);font-size:14px">🏐 ${p}</div>`
   ).join('');
+}
+
+// ===================== RELATÓRIO FINANCEIRO =====================
+
+// ===================== RELATÓRIO DE CAIXA =====================
+
+async function carregarAnoCaixa() {
+  // Popula o select de anos com os anos que têm lançamentos
+  const { data } = await SB.from('caixa_lancamentos').select('data').order('data', { ascending: true });
+  const anos = [...new Set((data || []).map(l => l.data?.slice(0,4)).filter(Boolean))];
+  if (anos.length === 0) anos.push(String(new Date().getFullYear()));
+  const sel = document.getElementById('caixa-rel-ano');
+  if (!sel) return;
+  const anoAtual = String(new Date().getFullYear());
+  sel.innerHTML = anos.map(a => `<option value="${a}" ${a === anoAtual ? 'selected' : ''}>${a}</option>`).join('');
+  await carregarMesesCaixa();
+}
+
+async function carregarMesesCaixa() {
+  const ano = document.getElementById('caixa-rel-ano')?.value;
+  const el  = document.getElementById('caixa-rel-meses-list');
+  if (!el || !ano) return;
+  el.innerHTML = '<div style="font-size:13px;color:var(--text2);padding:8px 0">Carregando...</div>';
+
+  const { data } = await SB.from('caixa_lancamentos')
+    .select('data,tipo,valor')
+    .gte('data', `${ano}-01-01`)
+    .lte('data', `${ano}-12-31`)
+    .order('data', { ascending: true });
+
+  const nomeMeses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const mesesMap = {};
+  (data || []).forEach(l => {
+    const m = parseInt(l.data.slice(5,7));
+    if (!mesesMap[m]) mesesMap[m] = { entradas: 0, saidas: 0 };
+    if (l.tipo === 'entrada') mesesMap[m].entradas += Number(l.valor);
+    else mesesMap[m].saidas += Number(l.valor);
+  });
+
+  const meses = Object.keys(mesesMap).map(Number).sort((a,b) => a-b);
+  if (meses.length === 0) {
+    el.innerHTML = '<div style="font-size:13px;color:var(--text2);padding:8px 0">Nenhum lançamento neste ano.</div>';
+    return;
+  }
+
+  const mesAtual = new Date().getMonth() + 1;
+  el.innerHTML = meses.map(m => {
+    const saldo = mesesMap[m].entradas - mesesMap[m].saidas;
+    const saldoCor = saldo >= 0 ? '#16a34a' : '#dc2626';
+    const checked = m === mesAtual ? 'checked' : 'checked'; // pré-seleciona todos
+    return `<label style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--bg3);cursor:pointer">
+      <input type="checkbox" class="caixa-rel-mes-cb" data-mes="${m}" ${checked} style="width:17px;height:17px;accent-color:var(--accent)">
+      <span style="font-size:14px;flex:1">${nomeMeses[m-1]}</span>
+      <span style="font-size:12px;color:var(--success)">+${mesesMap[m].entradas.toLocaleString('pt-BR',{minimumFractionDigits:2})}</span>
+      <span style="font-size:12px;color:var(--text2);margin:0 4px">·</span>
+      <span style="font-size:12px;color:var(--error)">-${mesesMap[m].saidas.toLocaleString('pt-BR',{minimumFractionDigits:2})}</span>
+      <span style="font-size:12px;font-weight:700;color:${saldoCor};margin-left:6px">= ${saldo >= 0 ? '+' : ''}${saldo.toLocaleString('pt-BR',{minimumFractionDigits:2})}</span>
+    </label>`;
+  }).join('');
+}
+
+function caixaRelToggleMeses(check) {
+  document.querySelectorAll('.caixa-rel-mes-cb').forEach(cb => { cb.checked = check; });
+}
+
+async function gerarRelatorioCaixa() {
+  const ano     = document.getElementById('caixa-rel-ano')?.value;
+  const mesCbs  = [...document.querySelectorAll('.caixa-rel-mes-cb:checked')];
+  if (!ano || mesCbs.length === 0) { toast('Selecione ao menos um mês', 'error'); return; }
+
+  const mesesSel = mesCbs.map(cb => parseInt(cb.dataset.mes)).sort((a,b) => a-b);
+  const btnGerar = document.querySelector('#relatorio-caixa-resultado')?.previousElementSibling?.querySelector('.btn-primary');
+  const btn = document.querySelector('[onclick="gerarRelatorioCaixa()"]');
+  if (btn) { btn.innerHTML = '<span class="spinner"></span> Carregando...'; btn.disabled = true; }
+
+  try {
+    const nomeMeses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+    const fmtBRL = v => 'R$\u00a0' + Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const teamName = settings.team_name || 'Bravus Mohr';
+    const hoje = new Date();
+    const geradoEm = hoje.toLocaleDateString('pt-BR') + ' ' + hoje.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+
+    // Buscar lançamentos dos meses selecionados
+    const dataInicio = `${ano}-${String(Math.min(...mesesSel)).padStart(2,'0')}-01`;
+    const ultimoMes  = Math.max(...mesesSel);
+    const ultimoDia  = new Date(parseInt(ano), ultimoMes, 0).getDate();
+    const dataFim    = `${ano}-${String(ultimoMes).padStart(2,'0')}-${ultimoDia}`;
+
+    const { data: lancamentos } = await SB.from('caixa_lancamentos')
+      .select('*')
+      .gte('data', dataInicio)
+      .lte('data', dataFim)
+      .order('data', { ascending: true })
+      .order('created_at', { ascending: true });
+
+    // Filtrar apenas os meses selecionados (caso não sejam consecutivos)
+    const mesesSet = new Set(mesesSel);
+    const filtrados = (lancamentos || []).filter(l => mesesSet.has(parseInt(l.data.slice(5,7))));
+
+    if (filtrados.length === 0) {
+      document.getElementById('relatorio-caixa-resultado').innerHTML = `
+        <div class="card" style="text-align:center;padding:32px 16px;color:var(--text2)">
+          <div style="font-size:32px;margin-bottom:8px">📭</div>
+          <div style="font-size:15px;font-weight:600">Nenhum lançamento no período selecionado.</div>
+        </div>`;
+      return;
+    }
+
+    // Agrupar por mês
+    const grupos = {};
+    filtrados.forEach(l => {
+      const m = parseInt(l.data.slice(5,7));
+      if (!grupos[m]) grupos[m] = { items: [], entradas: 0, saidas: 0 };
+      grupos[m].items.push(l);
+      if (l.tipo === 'entrada') grupos[m].entradas += Number(l.valor);
+      else grupos[m].saidas += Number(l.valor);
+    });
+
+    let totalEntradas = 0, totalSaidas = 0;
+
+    const thS = `style="padding:7px 6px;text-align:left;font-size:11px;font-weight:700;color:var(--text2);border-bottom:2px solid var(--accent);background:var(--bg2)"`;
+    const thSR = `style="padding:7px 6px;text-align:right;font-size:11px;font-weight:700;color:var(--text2);border-bottom:2px solid var(--accent);background:var(--bg2);white-space:nowrap"`;
+
+    const blocosHTML = mesesSel.map(m => {
+      if (!grupos[m]) return '';
+      const g = grupos[m];
+      totalEntradas += g.entradas;
+      totalSaidas   += g.saidas;
+      const saldoMes = g.entradas - g.saidas;
+      const saldoCor = saldoMes >= 0 ? 'var(--success)' : 'var(--error)';
+
+      const rows = g.items.map((l, idx) => {
+        const isEntrada = l.tipo === 'entrada';
+        const bgRow = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.08)';
+        const dataFmt = new Date(l.data + 'T12:00:00').toLocaleDateString('pt-BR');
+        const origemTag = l.origem !== 'manual' ? `<span style="font-size:10px;color:var(--text2);background:var(--bg3);border-radius:3px;padding:1px 4px;margin-left:4px">auto</span>` : '';
+        return `<tr>
+          <td style="padding:7px 6px;font-size:12px;border-bottom:1px solid var(--bg3);background:${bgRow};white-space:nowrap">${dataFmt}</td>
+          <td style="padding:7px 6px;font-size:12px;border-bottom:1px solid var(--bg3);background:${bgRow}">${l.historico}${origemTag}</td>
+          <td style="padding:7px 6px;font-size:12px;border-bottom:1px solid var(--bg3);background:${bgRow};text-align:right;font-weight:600;white-space:nowrap;color:${isEntrada ? 'var(--success)' : 'var(--error)'}">${isEntrada ? '+' : '-'} ${fmtBRL(l.valor)}</td>
+        </tr>`;
+      }).join('');
+
+      return `<div style="margin-bottom:16px">
+        <div style="background:var(--bg2);border-radius:8px 8px 0 0;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;border:1px solid var(--bg3);border-bottom:none">
+          <div style="font-weight:700;font-size:14px;text-transform:capitalize">${nomeMeses[m-1]} / ${ano}</div>
+          <div style="font-size:12px;display:flex;gap:10px;align-items:center">
+            <span style="color:var(--success)">+${fmtBRL(g.entradas)}</span>
+            <span style="color:var(--error)">-${fmtBRL(g.saidas)}</span>
+            <span style="font-weight:700;color:${saldoCor}">= ${saldoMes >= 0 ? '+' : ''}${fmtBRL(saldoMes)}</span>
+          </div>
+        </div>
+        <div style="overflow-x:auto;border:1px solid var(--bg3);border-radius:0 0 8px 8px">
+          <table style="width:100%;border-collapse:collapse;min-width:300px">
+            <thead><tr>
+              <th ${thSR}>Data</th>
+              <th ${thS}>Histórico</th>
+              <th ${thSR}>Valor</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+    }).join('');
+
+    const saldoTotal = totalEntradas - totalSaidas;
+    const saldoTotalCor = saldoTotal >= 0 ? 'var(--success)' : 'var(--error)';
+    const periodoLabel = mesesSel.length === 1
+      ? `${nomeMeses[mesesSel[0]-1]} / ${ano}`
+      : `${nomeMeses[mesesSel[0]-1]} a ${nomeMeses[mesesSel[mesesSel.length-1]-1]} / ${ano}`;
+
+    const html = `
+      <div class="card" style="padding:0;overflow:hidden;margin-top:0">
+        <div style="padding:14px 16px;display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--bg3)">
+          <div>
+            <div style="font-size:15px;font-weight:700">${teamName} — Extrato de Caixa</div>
+            <div style="font-size:12px;color:var(--text2)">${periodoLabel} · Gerado em ${geradoEm}</div>
+          </div>
+          <button class="btn btn-secondary" style="font-size:13px" onclick="imprimirRelatorioCaixa()">🖨️ Imprimir / PDF</button>
+        </div>
+        <!-- Resumo geral -->
+        <div style="padding:12px 16px;display:flex;gap:16px;flex-wrap:wrap;background:var(--bg2);border-bottom:1px solid var(--bg3)">
+          <div style="text-align:center;flex:1;min-width:80px">
+            <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Entradas</div>
+            <div style="font-size:15px;font-weight:700;color:var(--success)">+${fmtBRL(totalEntradas)}</div>
+          </div>
+          <div style="text-align:center;flex:1;min-width:80px">
+            <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Saídas</div>
+            <div style="font-size:15px;font-weight:700;color:var(--error)">-${fmtBRL(totalSaidas)}</div>
+          </div>
+          <div style="text-align:center;flex:1;min-width:80px">
+            <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Saldo</div>
+            <div style="font-size:15px;font-weight:700;color:${saldoTotalCor}">${saldoTotal >= 0 ? '+' : ''}${fmtBRL(saldoTotal)}</div>
+          </div>
+        </div>
+        <div style="padding:14px 16px">${blocosHTML}</div>
+      </div>`;
+
+    document.getElementById('relatorio-caixa-resultado').innerHTML = html;
+    document.getElementById('relatorio-caixa-resultado').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    toast(`Extrato gerado — ${filtrados.length} lançamento(s)`, 'success');
+
+  } finally {
+    if (btn) { btn.innerHTML = '💰 Gerar Relatório de Caixa'; btn.disabled = false; }
+  }
+}
+
+function imprimirRelatorioCaixa() {
+  const resultado = document.getElementById('relatorio-caixa-resultado');
+  if (!resultado || !resultado.innerHTML.trim()) { toast('Gere o relatório primeiro', 'error'); return; }
+
+  const teamName = settings.team_name || 'Bravus Mohr';
+  const hoje = new Date();
+  const geradoEm = hoje.toLocaleDateString('pt-BR') + ' ' + hoje.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+
+  // Clona o conteúdo e remove o botão de imprimir
+  const clone = resultado.cloneNode(true);
+  clone.querySelectorAll('button').forEach(b => b.remove());
+
+  const win = window.open('', '_blank');
+  win.document.write(`<!DOCTYPE html><html><head>
+    <meta charset="UTF-8">
+    <title>Extrato de Caixa — ${teamName}</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: Arial, sans-serif; font-size: 12px; color: #111; background: #fff; padding: 20px; }
+      h2 { font-size: 16px; margin-bottom: 2px; }
+      .sub { font-size: 11px; color: #555; margin-bottom: 14px; }
+      .resumo { display: flex; gap: 0; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; margin-bottom: 18px; }
+      .resumo-item { flex: 1; text-align: center; padding: 10px 8px; border-right: 1px solid #cbd5e1; }
+      .resumo-item:last-child { border-right: none; }
+      .resumo-label { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: #64748b; margin-bottom: 4px; }
+      .resumo-val { font-size: 14px; font-weight: 700; }
+      .mes-header { background: #1e293b; color: #fff; padding: 8px 12px; border-radius: 6px 6px 0 0; display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 700; margin-top: 14px; }
+      .mes-resumo { font-size: 10px; display: flex; gap: 8px; }
+      table { width: 100%; border-collapse: collapse; font-size: 10px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 6px 6px; overflow: hidden; margin-bottom: 4px; }
+      th { background: #f1f5f9; color: #334155; padding: 6px 8px; text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: .4px; border-bottom: 1px solid #cbd5e1; }
+      th:last-child { text-align: right; }
+      td { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; }
+      td:last-child { text-align: right; font-weight: 600; white-space: nowrap; }
+      td:first-child { white-space: nowrap; color: #64748b; }
+      tr:nth-child(even) td { background: #f8fafc; }
+      .entrada { color: #16a34a; }
+      .saida   { color: #dc2626; }
+      .tag-auto { font-size: 9px; background: #f1f5f9; border-radius: 3px; padding: 1px 4px; margin-left: 4px; color: #64748b; }
+      @media print { body { padding: 10px; } }
+    </style>
+  </head><body>
+    <h2>${teamName} — Extrato de Caixa</h2>
+    <div class="sub">Gerado em ${geradoEm}</div>
+    <div id="conteudo"></div>
+    <script>
+      // Reconstrói o conteúdo a partir dos dados do parent
+      window.onload = function(){ window.print(); }
+    <\/script>
+  </body></html>`);
+
+  // Injeta o HTML limpo diretamente
+  const conteudo = win.document.getElementById('conteudo');
+  if (conteudo) {
+    // Reconstrói resumo e blocos com CSS de impressão limpo
+    const cards = resultado.querySelectorAll('[style*="margin-bottom:16px"]');
+    let resumoHtml = '';
+    let totalE = 0, totalS = 0;
+
+    // Lê valores do resumo já renderizado
+    const resumoEls = resultado.querySelectorAll('[style*="font-size:15px"]');
+    resumoEls.forEach(el => {
+      const txt = el.textContent.replace('R$\u00a0','').replace(/\./g,'').replace(',','.').replace('+','').replace('-','');
+      const num = parseFloat(txt) || 0;
+      if (el.style.color.includes('success') || el.textContent.includes('+')) totalE = num;
+      if (el.style.color.includes('error') || el.textContent.includes('-') && !el.textContent.includes('=')) totalS = num;
+    });
+
+    const saldoT = totalE - totalS;
+    const saldoCls = saldoT >= 0 ? 'entrada' : 'saida';
+    resumoHtml = `<div class="resumo">
+      <div class="resumo-item"><div class="resumo-label">Entradas</div><div class="resumo-val entrada">+R$ ${totalE.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>
+      <div class="resumo-item"><div class="resumo-label">Saídas</div><div class="resumo-val saida">-R$ ${totalS.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>
+      <div class="resumo-item"><div class="resumo-label">Saldo</div><div class="resumo-val ${saldoCls}">${saldoT >= 0 ? '+' : ''}R$ ${Math.abs(saldoT).toLocaleString('pt-BR',{minimumFractionDigits:2})}</div></div>
+    </div>`;
+
+    // Usa o clone do HTML gerado, mas substitui os estilos inline pelos classes de impressão
+    const rawHtml = clone.innerHTML
+      .replace(/color:var\(--success\)/g, 'color:#16a34a')
+      .replace(/color:var\(--error\)/g, 'color:#dc2626')
+      .replace(/color:var\(--text2\)/g, 'color:#64748b')
+      .replace(/color:var\(--accent\)/g, 'color:#3b82f6')
+      .replace(/background:var\(--bg2\)/g, 'background:#f8fafc')
+      .replace(/background:var\(--bg3\)/g, 'background:#f1f5f9')
+      .replace(/border:1px solid var\(--bg3\)/g, 'border:1px solid #e2e8f0')
+      .replace(/border-bottom:1px solid var\(--bg3\)/g, 'border-bottom:1px solid #e2e8f0')
+      .replace(/border-bottom:2px solid var\(--accent\)/g, 'border-bottom:2px solid #3b82f6')
+      .replace(/background:rgba\(128,128,128,0\.08\)/g, 'background:#f8fafc')
+      .replace(/var\(--text\)/g, '#111')
+      .replace(/var\(--bg\)/g, '#fff');
+
+    conteudo.innerHTML = resumoHtml + rawHtml;
+  }
+  win.document.close();
 }
 
 // ===================== RELATÓRIO FINANCEIRO =====================
